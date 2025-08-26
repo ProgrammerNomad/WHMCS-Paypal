@@ -3,14 +3,25 @@
 
 A modern, secure, open-source PayPal payment gateway module for WHMCS (v8.13.1+) using the PayPal REST API, with configurable fee options, full webhook support, and both Live/Sandbox modes.
 
-## Features
 
-- Modern PayPal REST API integration (no insecure HTML forms)
-- Set custom PayPal fee percentage and fixed fee per payment (e.g., 5.95% + $0.30)
-- Fees are automatically calculated and added to the invoice total
-- Supports both Live and Sandbox (testing) modes
-- Secure webhook handler with signature verification (auto-marks invoices as paid)
-- Open source and ready for community use and improvement
+## Features (Completed)
+
+- [x] Modern PayPal REST API integration (no insecure HTML forms)
+- [x] Set custom PayPal fee percentage and fixed fee per payment (e.g., 5.95% + $0.30)
+- [x] Fees are automatically calculated and added to the invoice total
+- [x] Supports both Live and Sandbox (testing) modes
+- [x] Secure webhook handler with signature verification (auto-marks invoices as paid)
+- [x] Open source and ready for community use and improvement
+
+## To Do / Ideas for Enhancement
+
+- [ ] Refund support: Add a function to process refunds via the PayPal API from WHMCS admin
+- [ ] Transaction logging: Log all API requests/responses for easier debugging and compliance
+- [ ] Multi-language support: Add language files for gateway messages
+- [ ] Error handling: Improve user-facing error messages and admin notifications
+- [ ] More webhook events: Support additional PayPal events (e.g., refunds, disputes)
+- [ ] Unit/integration tests: Add tests for easier maintenance and contributions
+- [ ] UI enhancements: Add more details to the payment button or invoice notes
 
 ## Installation & Setup
 
