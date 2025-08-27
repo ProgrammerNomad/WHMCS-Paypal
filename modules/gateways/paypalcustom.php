@@ -48,7 +48,7 @@ function paypalcustom_config()
     return [
         'FriendlyName' => [
             'Type' => 'System',
-            'Value' => 'PayPal Custom API Gateway - <a href="https://github.com/ProgrammerNomad/WHMCS-Paypal" target="_blank" style="color: #0073aa;">📖 Documentation</a>',
+            'Value' => 'PayPal Custom API Gateway',
         ],
         'clientId' => [
             'FriendlyName' => 'PayPal Client ID',
@@ -66,7 +66,7 @@ function paypalcustom_config()
             'FriendlyName' => 'PayPal Webhook ID',
             'Type' => 'text',
             'Size' => '50',
-            'Description' => 'Enter your PayPal Webhook ID for payment notifications.<br><strong>Webhook URL to use in PayPal:</strong> ' . (isset($_SERVER['HTTP_HOST']) ? 'https://' . $_SERVER['HTTP_HOST'] : 'https://yourdomain.com') . '/modules/gateways/callback/paypalcustom.php<br><a href="https://github.com/ProgrammerNomad/WHMCS-Paypal" target="_blank">📖 View Full Documentation</a>',
+            'Description' => 'Enter your PayPal Webhook ID for payment notifications.<br><strong>Webhook URL to use in PayPal:</strong> ' . (isset($_SERVER['HTTP_HOST']) ? 'https://' . $_SERVER['HTTP_HOST'] : 'https://yourdomain.com') . '/modules/gateways/callback/paypalcustom.php',
         ],
         'feePercent' => [
             'FriendlyName' => 'PayPal Fee Percentage',
