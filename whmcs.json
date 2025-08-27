@@ -69,7 +69,7 @@
         },
         "webhookId": {
             "name": "PayPal Webhook ID",
-            "description": "Enter your PayPal Webhook ID for payment notifications",
+            "description": "Enter your PayPal Webhook ID for payment notifications.<br><strong>Webhook URL to use in PayPal:</strong> https://yourdomain.com/modules/gateways/callback/paypalcustom.php<br><em>Replace 'yourdomain.com' with your actual domain name.</em>",
             "type": "text",
             "required": true
         },

@@ -66,7 +66,7 @@ function paypalcustom_config()
             'FriendlyName' => 'PayPal Webhook ID',
             'Type' => 'text',
             'Size' => '50',
-            'Description' => 'Enter your PayPal Webhook ID for payment notifications.',
+            'Description' => 'Enter your PayPal Webhook ID for payment notifications.<br><strong>Webhook URL to use in PayPal:</strong> ' . (isset($_SERVER['HTTP_HOST']) ? 'https://' . $_SERVER['HTTP_HOST'] : 'https://yourdomain.com') . '/modules/gateways/callback/paypalcustom.php',
         ],
         'feePercent' => [
             'FriendlyName' => 'PayPal Fee Percentage',
