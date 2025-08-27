@@ -178,8 +178,8 @@ if (isset($event['event_type']) && $event['event_type'] === 'CHECKOUT.ORDER.APPR
     $originalAmount = $invoiceDetails['total'];
     
     // Calculate PayPal fees (from gateway configuration) - for order capture
-    $feePercent = (float)($gatewayParams['feePercent'] ?? 5.95);
-    $feeFixed = (float)($gatewayParams['feeFixed'] ?? 0.30);
+    $feePercent = (float)($gatewayParams['feePercent']);
+    $feeFixed = (float)($gatewayParams['feeFixed']);
     $calculatedFee = round(($originalAmount * $feePercent / 100) + $feeFixed, 2);
     
     // Capture the order to complete payment
@@ -233,47 +233,37 @@ if (isset($event['event_type']) && $event['event_type'] === 'CHECKOUT.ORDER.APPR
         $originalCurrency
     );
     
-    if (!$feeAdded) {
-        logTransaction($gatewayParams['paymentmethod'], [
-            'invoice_id' => $invoiceId,
-            'error' => 'Failed to add PayPal fee to invoice'
-        ], 'Warning: Could not add PayPal fee to invoice');
-        
-        // If we can't add the fee, just mark invoice as paid with original amount
-        $amountToAdd = ($originalCurrency === $capturedCurrency) ? $originalAmount : $originalAmount;
-    } else {
-        // Fee added successfully, get updated invoice total
+    // Always use the captured amount for payment (includes fee), regardless of fee addition success
+    $amountToAdd = $capturedAmount;
+    
+    // If fee was added successfully, verify the invoice total matches (optional logging)
+    if ($feeAdded) {
         $updatedInvoiceDetails = paypalcustom_getInvoiceDetails($invoiceId);
         if ($updatedInvoiceDetails['result'] === 'success') {
             $newInvoiceTotal = $updatedInvoiceDetails['total'];
-            // Use the new invoice total (original + fee)
-            $amountToAdd = ($originalCurrency === $capturedCurrency) ? $capturedAmount : $newInvoiceTotal;
-        } else {
-            // Fallback: use calculated amount
-            $amountToAdd = ($originalCurrency === $capturedCurrency) ? $capturedAmount : ($originalAmount + $calculatedFee);
+            if (abs($newInvoiceTotal - ($originalAmount + $calculatedFee)) > 0.01) {
+                logTransaction($gatewayParams['paymentmethod'], [
+                    'invoice_id' => $invoiceId,
+                    'expected_total' => $originalAmount + $calculatedFee,
+                    'actual_total' => $newInvoiceTotal,
+                    'captured_amount' => $capturedAmount
+                ], 'Warning: Invoice total does not match expected after fee addition');
+            }
         }
+    } else {
+        logTransaction($gatewayParams['paymentmethod'], [
+            'invoice_id' => $invoiceId,
+            'fee_amount' => $calculatedFee,
+            'error' => 'Fee addition failed, but payment recorded for captured amount'
+        ], 'Fee addition failed - payment recorded without fee item');
     }
     
-    // Step 3: Log the successful payment with currency and fee details
-    logTransaction($gatewayParams['paymentmethod'], [
-        'order_id' => $orderId,
-        'capture_id' => $captureId,
-        'paypal_amount' => $capturedAmount,
-        'paypal_currency' => $capturedCurrency,
-        'invoice_amount' => $originalAmount,
-        'invoice_currency' => $originalCurrency,
-        'calculated_fee' => $calculatedFee,
-        'fee_added_to_invoice' => $feeAdded,
-        'amount_added_to_invoice' => $amountToAdd,
-        'capture_data' => $captureData
-    ], 'Payment Captured Successfully with Fee Added to Invoice');
-    
-    // Step 4: Add payment to invoice (now including the fee in total)
+    // Step 4: Add payment to invoice (using captured amount, which includes fee)
     addInvoicePayment(
         $invoiceId,
         $captureId,
-        $amountToAdd, // Total amount including fees
-        0, // Payment fee (set to 0 since we added it as line item)
+        $amountToAdd, // Always the captured amount
+        0, // Payment fee (set to 0 since fee is handled separately)
         $gatewayParams['paymentmethod']
     );
     
@@ -366,32 +356,37 @@ if (isset($event['event_type']) && $event['event_type'] === 'PAYMENT.CAPTURE.COM
         $originalCurrency
     );
     
-    // Step 2: Determine the amount to add as payment
-    if ($originalCurrency === $paypalCurrency) {
-        $amountToAdd = $paypalAmount;
+    // Always use the captured amount for payment (includes fee), regardless of fee addition success
+    $amountToAdd = $capturedAmount;
+    
+    // If fee was added successfully, verify the invoice total matches (optional logging)
+    if ($feeAdded) {
+        $updatedInvoiceDetails = paypalcustom_getInvoiceDetails($invoiceId);
+        if ($updatedInvoiceDetails['result'] === 'success') {
+            $newInvoiceTotal = $updatedInvoiceDetails['total'];
+            if (abs($newInvoiceTotal - ($originalAmount + $calculatedFee)) > 0.01) {
+                logTransaction($gatewayParams['paymentmethod'], [
+                    'invoice_id' => $invoiceId,
+                    'expected_total' => $originalAmount + $calculatedFee,
+                    'actual_total' => $newInvoiceTotal,
+                    'captured_amount' => $capturedAmount
+                ], 'Warning: Invoice total does not match expected after fee addition');
+            }
+        }
     } else {
-        $amountToAdd = $originalAmount + $calculatedFee;
+        logTransaction($gatewayParams['paymentmethod'], [
+            'invoice_id' => $invoiceId,
+            'fee_amount' => $calculatedFee,
+            'error' => 'Fee addition failed, but payment recorded for captured amount'
+        ], 'Fee addition failed - payment recorded without fee item');
     }
     
-    // Step 3: Log the successful payment with currency and fee details
-    logTransaction($gatewayParams['paymentmethod'], [
-        'capture_id' => $captureId,
-        'paypal_amount' => $paypalAmount,
-        'paypal_currency' => $paypalCurrency,
-        'invoice_amount' => $originalAmount,
-        'invoice_currency' => $originalCurrency,
-        'calculated_fee' => $calculatedFee,
-        'fee_added_to_invoice' => $feeAdded,
-        'amount_added_to_invoice' => $amountToAdd,
-        'event_data' => $event
-    ], 'Payment Completed Successfully with Fee Added to Invoice (Auto-Capture)');
-    
-    // Step 4: Add payment to invoice (now including the fee in total)
+    // Step 4: Add payment to invoice (using captured amount, which includes fee)
     addInvoicePayment(
         $invoiceId,
         $captureId,
-        $amountToAdd, // Total amount including fees
-        0, // Payment fee (set to 0 since we added it as line item)
+        $amountToAdd, // Always the captured amount
+        0, // Payment fee (set to 0 since fee is handled separately)
         $gatewayParams['paymentmethod']
     );
     
@@ -646,47 +641,37 @@ if (isset($event['event_type']) && $event['event_type'] === 'CHECKOUT.ORDER.APPR
         $originalCurrency
     );
     
-    if (!$feeAdded) {
-        logTransaction($gatewayParams['paymentmethod'], [
-            'invoice_id' => $invoiceId,
-            'error' => 'Failed to add PayPal fee to invoice'
-        ], 'Warning: Could not add PayPal fee to invoice');
-        
-        // If we can't add the fee, just mark invoice as paid with original amount
-        $amountToAdd = ($originalCurrency === $capturedCurrency) ? $originalAmount : $originalAmount;
-    } else {
-        // Fee added successfully, get updated invoice total
+    // Always use the captured amount for payment (includes fee), regardless of fee addition success
+    $amountToAdd = $capturedAmount;
+    
+    // If fee was added successfully, verify the invoice total matches (optional logging)
+    if ($feeAdded) {
         $updatedInvoiceDetails = paypalcustom_getInvoiceDetails($invoiceId);
         if ($updatedInvoiceDetails['result'] === 'success') {
             $newInvoiceTotal = $updatedInvoiceDetails['total'];
-            // Use the new invoice total (original + fee)
-            $amountToAdd = ($originalCurrency === $capturedCurrency) ? $capturedAmount : $newInvoiceTotal;
-        } else {
-            // Fallback: use calculated amount
-            $amountToAdd = ($originalCurrency === $capturedCurrency) ? $capturedAmount : ($originalAmount + $calculatedFee);
+            if (abs($newInvoiceTotal - ($originalAmount + $calculatedFee)) > 0.01) {
+                logTransaction($gatewayParams['paymentmethod'], [
+                    'invoice_id' => $invoiceId,
+                    'expected_total' => $originalAmount + $calculatedFee,
+                    'actual_total' => $newInvoiceTotal,
+                    'captured_amount' => $capturedAmount
+                ], 'Warning: Invoice total does not match expected after fee addition');
+            }
         }
+    } else {
+        logTransaction($gatewayParams['paymentmethod'], [
+            'invoice_id' => $invoiceId,
+            'fee_amount' => $calculatedFee,
+            'error' => 'Fee addition failed, but payment recorded for captured amount'
+        ], 'Fee addition failed - payment recorded without fee item');
     }
     
-    // Step 3: Log the successful payment with currency and fee details
-    logTransaction($gatewayParams['paymentmethod'], [
-        'order_id' => $orderId,
-        'capture_id' => $captureId,
-        'paypal_amount' => $capturedAmount,
-        'paypal_currency' => $capturedCurrency,
-        'invoice_amount' => $originalAmount,
-        'invoice_currency' => $originalCurrency,
-        'calculated_fee' => $calculatedFee,
-        'fee_added_to_invoice' => $feeAdded,
-        'amount_added_to_invoice' => $amountToAdd,
-        'capture_data' => $captureData
-    ], 'Payment Captured Successfully with Fee Added to Invoice');
-    
-    // Step 4: Add payment to invoice (now including the fee in total)
+    // Step 4: Add payment to invoice (using captured amount, which includes fee)
     addInvoicePayment(
         $invoiceId,
         $captureId,
-        $amountToAdd, // Total amount including fees
-        0, // Payment fee (set to 0 since we added it as line item)
+        $amountToAdd, // Always the captured amount
+        0, // Payment fee (set to 0 since fee is handled separately)
         $gatewayParams['paymentmethod']
     );
     
@@ -779,32 +764,37 @@ if (isset($event['event_type']) && $event['event_type'] === 'PAYMENT.CAPTURE.COM
         $originalCurrency
     );
     
-    // Step 2: Determine the amount to add as payment
-    if ($originalCurrency === $paypalCurrency) {
-        $amountToAdd = $paypalAmount;
+    // Always use the captured amount for payment (includes fee), regardless of fee addition success
+    $amountToAdd = $capturedAmount;
+    
+    // If fee was added successfully, verify the invoice total matches (optional logging)
+    if ($feeAdded) {
+        $updatedInvoiceDetails = paypalcustom_getInvoiceDetails($invoiceId);
+        if ($updatedInvoiceDetails['result'] === 'success') {
+            $newInvoiceTotal = $updatedInvoiceDetails['total'];
+            if (abs($newInvoiceTotal - ($originalAmount + $calculatedFee)) > 0.01) {
+                logTransaction($gatewayParams['paymentmethod'], [
+                    'invoice_id' => $invoiceId,
+                    'expected_total' => $originalAmount + $calculatedFee,
+                    'actual_total' => $newInvoiceTotal,
+                    'captured_amount' => $capturedAmount
+                ], 'Warning: Invoice total does not match expected after fee addition');
+            }
+        }
     } else {
-        $amountToAdd = $originalAmount + $calculatedFee;
+        logTransaction($gatewayParams['paymentmethod'], [
+            'invoice_id' => $invoiceId,
+            'fee_amount' => $calculatedFee,
+            'error' => 'Fee addition failed, but payment recorded for captured amount'
+        ], 'Fee addition failed - payment recorded without fee item');
     }
     
-    // Step 3: Log the successful payment with currency and fee details
-    logTransaction($gatewayParams['paymentmethod'], [
-        'capture_id' => $captureId,
-        'paypal_amount' => $paypalAmount,
-        'paypal_currency' => $paypalCurrency,
-        'invoice_amount' => $originalAmount,
-        'invoice_currency' => $originalCurrency,
-        'calculated_fee' => $calculatedFee,
-        'fee_added_to_invoice' => $feeAdded,
-        'amount_added_to_invoice' => $amountToAdd,
-        'event_data' => $event
-    ], 'Payment Completed Successfully with Fee Added to Invoice (Auto-Capture)');
-    
-    // Step 4: Add payment to invoice (now including the fee in total)
+    // Step 4: Add payment to invoice (using captured amount, which includes fee)
     addInvoicePayment(
         $invoiceId,
         $captureId,
-        $amountToAdd, // Total amount including fees
-        0, // Payment fee (set to 0 since we added it as line item)
+        $amountToAdd, // Always the captured amount
+        0, // Payment fee (set to 0 since fee is handled separately)
         $gatewayParams['paymentmethod']
     );
     
