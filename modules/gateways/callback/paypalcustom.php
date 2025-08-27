@@ -447,7 +447,7 @@ function paypalcustom_addPayPalFeeToInvoice($invoiceId, $feeAmount, $feePercent,
         'fee_percent' => $feePercent,
         'fee_fixed' => $feeFixed,
         'original_amount' => $originalAmount,
-        'currency' => $currency
+        'currency' => $currency  // Log currency for debugging
     ], 'PayPal Fee Addition Attempt');
     
     if ($feeAmount <= 0) {
@@ -487,7 +487,7 @@ function paypalcustom_addPayPalFeeToInvoice($invoiceId, $feeAmount, $feePercent,
             'userid' => 0, // Default, or fetch from invoice if needed
             'type' => 'Item', // Standard item type
             'relid' => 0, // No related product
-            'description' => "PayPal Processing Fee ({$feePercent}% + {$currency} {$feeFixed})",
+            'description' => "PayPal Processing Fee ({$feePercent}% + {$currency} {$feeFixed})", // Include currency in description
             'amount' => $feeAmount,
             'taxed' => 0, // Not taxed
             'duedate' => date('Y-m-d'), // Today's date
@@ -498,6 +498,9 @@ function paypalcustom_addPayPalFeeToInvoice($invoiceId, $feeAmount, $feePercent,
         $inserted = \Illuminate\Database\Capsule\Manager::table('tblinvoiceitems')->insert($insertData);
         
         if ($inserted) {
+            // Recalculate the invoice total after adding the fee
+            updateInvoiceTotal($invoiceId);
+            
             logTransaction('paypalcustom', [
                 'invoice_id' => $invoiceId,
                 'fee_amount' => $feeAmount,
