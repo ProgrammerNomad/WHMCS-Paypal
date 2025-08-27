@@ -210,7 +210,24 @@ function paypalcustom_link($params)
         $messages[] = '<div class="alert alert-warning"><strong>Payment Cancelled:</strong> You have cancelled the PayPal payment. Please try again.</div>';
     }
     if (isset($_GET['status']) && $_GET['status'] == 'waitingconfirmation') {
-        $messages[] = '<div class="alert alert-info"><strong>Please Wait:</strong> Payment is processing. Please wait for confirmation.</div>';
+        $messages[] = '<div class="alert alert-info"><strong>Please Wait:</strong> Payment is processing. Please wait for confirmation.<br><div>Page will refresh in <span id="countdown">30</span> seconds.</div></div>';
+        $messages[] = '<script>
+            var timeLeft = 30;
+            var countdownElement = document.getElementById("countdown");
+            var timer = setInterval(function() {
+                timeLeft--;
+                if (countdownElement) countdownElement.textContent = timeLeft;
+                if (timeLeft <= 0) {
+                    clearInterval(timer);
+                    var url = new URL(window.location);
+                    url.searchParams.delete("status");
+                    url.searchParams.delete("gateway");
+                    url.searchParams.delete("token");
+                    url.searchParams.delete("PayerID");
+                    window.location.href = url.toString();
+                }
+            }, 1000);
+        </script>';
     }
 
     $messageHtml = '';
