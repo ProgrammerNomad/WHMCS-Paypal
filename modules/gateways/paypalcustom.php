@@ -1,7 +1,15 @@
 <?php
 
 /**
- * PayPal Custom API Gateway for WHMCS
+ function paypalcustom_MetaData()
+{
+    return [
+        'DisplayName' => 'PayPal Custom API Gateway',
+        'APIVersion' => '1.1',
+        'DisableLocalCreditCardInput' => true,
+        'TokenisedStorage' => false,
+    ];
+}Custom API Gateway for WHMCS
  * Version: 1.0.0
  * Author: ProgrammerNomad
  * Open Source: https://github.com/ProgrammerNomad/WHMCS-Paypal

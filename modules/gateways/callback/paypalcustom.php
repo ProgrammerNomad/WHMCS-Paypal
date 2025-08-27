@@ -10,14 +10,31 @@
  * For full security, implement webhook signature verification as per PayPal docs.
  */
 
-require_once '../../../init.php';
-require_once '../../../includes/gatewayfunctions.php';
-require_once '../../../includes/invoicefunctions.php';
+require_once __DIR__ . '/../../../init.php';
+require_once __DIR__ . '/../../../includes/gatewayfunctions.php';
+require_once __DIR__ . '/../../../includes/invoicefunctions.php';
 
 $gatewayModuleName = 'paypalcustom';
 $gatewayParams = getGatewayVariables($gatewayModuleName);
 if (!$gatewayParams['type']) {
     die('Module Not Activated');
+}
+
+// Handle PayPal Return URLs (success/cancel)
+if (isset($_GET['success']) && $_GET['success'] == '1') {
+    $invoiceId = (int)$_GET['invoiceid'];
+    if ($invoiceId) {
+        header('Location: ' . $CONFIG['SystemURL'] . '/viewinvoice.php?id=' . $invoiceId);
+        exit;
+    }
+}
+
+if (isset($_GET['cancel']) && $_GET['cancel'] == '1') {
+    $invoiceId = (int)$_GET['invoiceid'];
+    if ($invoiceId) {
+        header('Location: ' . $CONFIG['SystemURL'] . '/viewinvoice.php?id=' . $invoiceId . '&paymentfailed=1');
+        exit;
+    }
 }
 
 // Handle PayPal Webhook
@@ -105,18 +122,22 @@ if (isset($event['event_type']) && $event['event_type'] === 'CHECKOUT.ORDER.APPR
     $paymentCurrency = $event['resource']['purchase_units'][0]['amount']['currency_code'];
 
     // Validate invoice ID
-    $invoiceId = checkCbInvoiceID($invoiceId, $gatewayParams['name']);
+    $invoiceId = checkCbInvoiceID($invoiceId, $gatewayParams['paymentmethod']);
     // Check for duplicate transaction
     checkCbTransID($txnId);
+
+    // Log the transaction
+    logTransaction($gatewayParams['paymentmethod'], $event, 'Successful');
 
     // Add payment to invoice
     addInvoicePayment(
         $invoiceId,
         $txnId,
         $paymentAmount,
-        '',
-        $gatewayModuleName
+        0, // Payment fee (if any)
+        $gatewayParams['paymentmethod']
     );
+    
     header('HTTP/1.1 200 OK');
     echo 'Webhook processed.';
     exit;

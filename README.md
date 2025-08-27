@@ -33,7 +33,7 @@ git clone https://github.com/ProgrammerNomad/WHMCS-Paypal.git
 
 ### 2. Copy Files
 
-Copy the `modules/gateways/paypalcustom` folder to your WHMCS installation's `modules/gateways/` directory.
+Copy the `modules/gateways/paypalcustom.php` file to your WHMCS installation's `modules/gateways/` directory.
 Copy the `modules/gateways/callback/paypalcustom.php` file to your WHMCS installation's `modules/gateways/callback/` directory.
 
 ### 3. Activate Gateway
