@@ -236,7 +236,7 @@ function paypalcustom_link($params)
     }
 
     // Now build the full HTML, including messages before the button
-    $html = $messageHtml . '<a href="' . htmlspecialchars($approveUrl) . '" class="btn btn-primary" target="_blank">Pay with PayPal (Total: ' . $totalAmount . ' ' . htmlspecialchars($currency) . ')</a>';
+    $html = $messageHtml . '<a href="' . htmlspecialchars($approveUrl) . '" class="btn btn-primary">Pay with PayPal (Total: ' . $totalAmount . ' ' . htmlspecialchars($currency) . ')</a>';
     $html .= '<br><small>PayPal fees applicable: ' . $feePercent . '% + $' . $feeFixed . ' (Total fee: $' . $fee . ')</small>';
     return $html;
 }
