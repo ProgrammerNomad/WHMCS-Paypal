@@ -1,0 +1,42 @@
+{
+    "name": "programmernomad/whmcs-paypal-custom",
+    "description": "Modern PayPal Custom API Gateway for WHMCS with configurable fees and webhook support",
+    "type": "whmcs-module",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "ProgrammerNomad",
+            "email": "contact@programmernomad.com",
+            "homepage": "https://github.com/ProgrammerNomad"
+        }
+    ],
+    "keywords": [
+        "whmcs",
+        "paypal",
+        "payment-gateway",
+        "api",
+        "webhook",
+        "rest-api"
+    ],
+    "homepage": "https://github.com/ProgrammerNomad/WHMCS-Paypal",
+    "support": {
+        "issues": "https://github.com/ProgrammerNomad/WHMCS-Paypal/issues",
+        "source": "https://github.com/ProgrammerNomad/WHMCS-Paypal"
+    },
+    "require": {
+        "php": ">=7.4"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.0"
+    },
+    "autoload": {
+        "files": [
+            "modules/gateways/paypalcustom.php"
+        ]
+    },
+    "extra": {
+        "whmcs": {
+            "compatible_versions": ["8.0", "8.1", "8.2", "8.3", "8.4", "8.5", "8.6", "8.7", "8.8", "8.9", "8.10", "8.11", "8.12", "8.13"]
+        }
+    }
+}

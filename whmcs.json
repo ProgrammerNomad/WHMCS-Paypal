@@ -1,0 +1,102 @@
+{
+    "schema": "https://raw.githubusercontent.com/WHMCS/module-schema/master/gateway-module.json",
+    "type": "gateway",
+    "name": "PayPal Custom API Gateway",
+    "description": "A modern, secure PayPal payment gateway using REST API with configurable fees and webhook support for automatic invoice marking.",
+    "logo": "",
+    "version": "1.0.0",
+    "category": "Payment Gateways",
+    "subcategory": "Third Party",
+    "author": {
+        "name": "ProgrammerNomad",
+        "url": "https://github.com/ProgrammerNomad",
+        "email": "contact@programmernomad.com"
+    },
+    "website": "https://github.com/ProgrammerNomad/WHMCS-Paypal",
+    "docs": "https://github.com/ProgrammerNomad/WHMCS-Paypal#readme",
+    "support": "https://github.com/ProgrammerNomad/WHMCS-Paypal/issues",
+    "license": "MIT",
+    "tags": [
+        "paypal",
+        "api",
+        "webhook",
+        "fees",
+        "rest-api",
+        "third-party"
+    ],
+    "whmcs": {
+        "versions": [
+            "8.0",
+            "8.1", 
+            "8.2",
+            "8.3",
+            "8.4",
+            "8.5",
+            "8.6",
+            "8.7",
+            "8.8",
+            "8.9",
+            "8.10",
+            "8.11",
+            "8.12",
+            "8.13"
+        ]
+    },
+    "php": {
+        "minimum": "7.4",
+        "maximum": "8.3"
+    },
+    "features": {
+        "payment_methods": ["paypal"],
+        "webhooks": true,
+        "refunds": false,
+        "recurring": false,
+        "tokenization": false,
+        "3ds": false
+    },
+    "configuration": {
+        "clientId": {
+            "name": "PayPal Client ID",
+            "description": "Enter your PayPal REST API Client ID from developer.paypal.com",
+            "type": "text",
+            "required": true
+        },
+        "clientSecret": {
+            "name": "PayPal Client Secret", 
+            "description": "Enter your PayPal REST API Client Secret",
+            "type": "password",
+            "required": true
+        },
+        "webhookId": {
+            "name": "PayPal Webhook ID",
+            "description": "Enter your PayPal Webhook ID for payment notifications",
+            "type": "text",
+            "required": true
+        },
+        "mode": {
+            "name": "Mode",
+            "description": "Select Live for production or Sandbox for testing",
+            "type": "dropdown",
+            "options": {
+                "live": "Live",
+                "sandbox": "Sandbox"
+            },
+            "default": "live",
+            "required": true
+        },
+        "feePercent": {
+            "name": "PayPal Fee Percentage",
+            "description": "Enter the percentage fee (e.g., 5.95 for 5.95%)",
+            "type": "text",
+            "default": "5.95",
+            "required": false
+        },
+        "feeFixed": {
+            "name": "PayPal Fixed Fee",
+            "description": "Enter the fixed fee (e.g., 0.30 for $0.30)",
+            "type": "text", 
+            "default": "0.30",
+            "required": false
+        }
+    }
+}
