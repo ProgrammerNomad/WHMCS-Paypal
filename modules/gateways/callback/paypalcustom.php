@@ -6,8 +6,6 @@
  *
  * This script handles PayPal webhooks and marks invoices as paid in WHMCS.
  * You must configure your PayPal app to send webhooks to this URL.
- *
- * For full security, implement webhook signature verification as per PayPal docs.
  */
 
 require_once __DIR__ . '/../../../init.php';
@@ -42,6 +40,8 @@ $body = file_get_contents('php://input');
 $headers = getallheaders();
 $event = json_decode($body, true);
 
+// Log all webhook events for debugging
+logTransaction($gatewayParams['paymentmethod'], $event, 'Webhook Received: ' . ($event['event_type'] ?? 'Unknown'));
 
 // Webhook signature verification
 $paypalMode = $gatewayParams['mode'] ?? 'live';
@@ -115,78 +115,72 @@ if (empty($verifyData['verification_status']) || $verifyData['verification_statu
     exit;
 }
 
-if (isset($event['event_type']) && $event['event_type'] === 'CHECKOUT.ORDER.APPROVED') {
-    // Order is approved, now we need to capture it
-    $orderId = $event['resource']['id'];
-    $invoiceId = $event['resource']['purchase_units'][0]['reference_id'];
+// Handle Payment Capture Completed (AUTO-CAPTURE)
+if (isset($event['event_type']) && $event['event_type'] === 'PAYMENT.CAPTURE.COMPLETED') {
+    $captureId = $event['resource']['id'];
+    $paymentAmount = $event['resource']['amount']['value'];
     
-    // Get access token to capture the order
-    $accessToken = paypalcustom_getAccessToken_callback($paypalClientId, $paypalClientSecret, $paypalMode);
-    if (!$accessToken) {
-        logTransaction($gatewayParams['paymentmethod'], $event, 'Failed to get access token for capture');
-        header('HTTP/1.1 500 Internal Server Error');
-        echo 'Failed to get access token.';
-        exit;
+    // Get invoice ID from custom_id or supplementary_data
+    $invoiceId = null;
+    if (isset($event['resource']['custom_id'])) {
+        $invoiceId = $event['resource']['custom_id'];
+    } elseif (isset($event['resource']['supplementary_data']['related_ids']['order_id'])) {
+        // If custom_id not available, we need to get it from the order
+        $orderId = $event['resource']['supplementary_data']['related_ids']['order_id'];
+        // Fetch order details to get reference_id (invoice ID)
+        $orderUrl = $paypalMode === 'sandbox' 
+            ? "https://api.sandbox.paypal.com/v2/checkout/orders/{$orderId}"
+            : "https://api.paypal.com/v2/checkout/orders/{$orderId}";
+        
+        $ch = curl_init($orderUrl);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: application/json',
+            'Authorization: Bearer ' . $accessToken,
+        ]);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 1);
+        $orderResult = curl_exec($ch);
+        curl_close($ch);
+        
+        $orderData = json_decode($orderResult, true);
+        if (isset($orderData['purchase_units'][0]['reference_id'])) {
+            $invoiceId = $orderData['purchase_units'][0]['reference_id'];
+        }
     }
     
-    // Capture the order
-    $captureUrl = $paypalMode === 'sandbox' 
-        ? "https://api.sandbox.paypal.com/v2/checkout/orders/{$orderId}/capture"
-        : "https://api.paypal.com/v2/checkout/orders/{$orderId}/capture";
-    
-    $ch = curl_init($captureUrl);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Content-Type: application/json',
-        'Authorization: Bearer ' . $accessToken,
-    ]);
-    curl_setopt($ch, CURLOPT_POST, 1);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, '{}');
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 1);
-    $captureResult = curl_exec($ch);
-    $captureHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    
-    $captureData = json_decode($captureResult, true);
-    
-    if ($captureHttpCode === 201 && isset($captureData['status']) && $captureData['status'] === 'COMPLETED') {
-        // Capture successful, mark invoice as paid
-        $txnId = $captureData['purchase_units'][0]['payments']['captures'][0]['id'];
-        $paymentAmount = $captureData['purchase_units'][0]['payments']['captures'][0]['amount']['value'];
-        
-        // Validate invoice ID
-        $invoiceId = checkCbInvoiceID($invoiceId, $gatewayParams['paymentmethod']);
-        // Check for duplicate transaction
-        checkCbTransID($txnId);
-        
-        // Log the successful capture
-        logTransaction($gatewayParams['paymentmethod'], $captureData, 'Payment Captured Successfully');
-        
-        // Add payment to invoice
-        addInvoicePayment(
-            $invoiceId,
-            $txnId,
-            $paymentAmount,
-            0, // Payment fee (if any)
-            $gatewayParams['paymentmethod']
-        );
-        
-        header('HTTP/1.1 200 OK');
-        echo 'Payment captured and invoice marked as paid.';
-        exit;
-    } else {
-        // Capture failed
-        logTransaction($gatewayParams['paymentmethod'], [
-            'event' => $event,
-            'capture_response' => $captureData,
-            'http_code' => $captureHttpCode
-        ], 'Payment Capture Failed');
-        
+    if (!$invoiceId) {
+        logTransaction($gatewayParams['paymentmethod'], $event, 'Payment Capture Completed - Invoice ID not found');
         header('HTTP/1.1 400 Bad Request');
-        echo 'Payment capture failed.';
+        echo 'Invoice ID not found in payment data.';
         exit;
     }
+    
+    // Validate invoice ID
+    $invoiceId = checkCbInvoiceID($invoiceId, $gatewayParams['paymentmethod']);
+    // Check for duplicate transaction
+    checkCbTransID($captureId);
+    
+    // Log the successful payment
+    logTransaction($gatewayParams['paymentmethod'], $event, 'Payment Completed Successfully (Auto-Capture)');
+    
+    // Add payment to invoice
+    addInvoicePayment(
+        $invoiceId,
+        $captureId,
+        $paymentAmount,
+        0, // Payment fee (if any)
+        $gatewayParams['paymentmethod']
+    );
+    
+    header('HTTP/1.1 200 OK');
+    echo 'Payment completed and invoice marked as paid.';
+    exit;
 }
 
-header('HTTP/1.1 400 Bad Request');
-echo 'Invalid webhook.';
+// Handle other events if needed
+if (isset($event['event_type'])) {
+    logTransaction($gatewayParams['paymentmethod'], $event, 'Unhandled Webhook Event: ' . $event['event_type']);
+}
+
+header('HTTP/1.1 200 OK');
+echo 'Webhook received but not processed.';

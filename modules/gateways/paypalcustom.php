@@ -162,6 +162,7 @@ function paypalcustom_link($params)
         'intent' => 'CAPTURE',
         'purchase_units' => [[
             'reference_id' => $invoiceId,
+            'custom_id' => $invoiceId, // Add custom_id for easier webhook tracking
             'description' => $description,
             'amount' => [
                 'currency_code' => $currency,
