@@ -1,36 +1,48 @@
 <?php
-
 /**
- function paypalcustom_MetaData()
-{
-    return [
-        'DisplayName' => 'PayPal Custom API Gateway',
-        'APIVersion' => '1.1',
-        'DisableLocalCreditCardInput' => true,
-        'TokenisedStorage' => false,
-    ];
-}Custom API Gateway for WHMCS
- * Version: 1.0.0
- * Author: ProgrammerNomad
- * Open Source: https://github.com/ProgrammerNomad/WHMCS-Paypal
- *
- * Modern PayPal gateway using REST API, with configurable fees and webhook support.
+ * PayPal Custom API Gateway for WHMCS
+ * 
+ * A modern, secure PayPal payment gateway using REST API with configurable fees
+ * 
+ * @package    WHMCS
+ * @author     ProgrammerNomad <https://github.com/ProgrammerNomad>
+ * @copyright  2025 ProgrammerNomad
+ * @license    MIT License
+ * @version    1.0.0
+ * @link       https://github.com/ProgrammerNomad/WHMCS-Paypal
  */
 
 if (!defined('WHMCS')) {
     die('This file cannot be accessed directly');
 }
 
+/**
+ * Gateway Metadata
+ * 
+ * Defines the gateway properties and capabilities
+ *
+ * @return array
+ */
 function paypalcustom_MetaData()
 {
     return [
-        'DisplayName' => 'PayPal Custom Gateway',
+        'DisplayName' => 'PayPal Custom API Gateway',
         'APIVersion' => '1.1',
-        'DisableLocalCredtCardInput' => true,
+        'DisableLocalCreditCardInput' => true,
         'TokenisedStorage' => false,
+        'failedEmail' => 'Credit Card Payment Failed',
+        'successEmail' => 'Credit Card Payment Confirmation',
+        'pendingEmail' => 'Credit Card Payment Pending',
     ];
 }
 
+/**
+ * Gateway Configuration Options
+ * 
+ * Defines the configuration fields shown in WHMCS admin
+ *
+ * @return array
+ */
 function paypalcustom_config()
 {
     return [
@@ -83,7 +95,14 @@ function paypalcustom_config()
     ];
 }
 
-// Helper: Get PayPal API Access Token
+/**
+ * Get PayPal API Access Token
+ * 
+ * Obtains an access token from PayPal for API authentication
+ *
+ * @param array $params Gateway configuration parameters
+ * @return string|false Access token on success, false on failure
+ */
 function paypalcustom_getAccessToken($params)
 {
     $clientId = $params['clientId'];
@@ -109,8 +128,14 @@ function paypalcustom_getAccessToken($params)
     return $data['access_token'] ?? false;
 }
 
-
-// Payment Link: Create PayPal Order and redirect
+/**
+ * Generate Payment Link
+ * 
+ * Creates a PayPal order and returns the payment button/link
+ *
+ * @param array $params Gateway and invoice parameters from WHMCS
+ * @return string HTML payment button or error message
+ */
 function paypalcustom_link($params)
 {
     $clientId = $params['clientId'];
