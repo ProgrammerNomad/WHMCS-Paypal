@@ -1,19 +1,23 @@
 <?php
+
 /**
- * PayPal Custom API Gateway Webhook/Callback Handler for WHMCS
- *
+ * PayPal Custom Payment Gateway Webhook Callback
+ * 
+ * For WHMCS 8.13.1+
  * Place this file at modules/gateways/callback/paypalcustom.php
- *
+ * 
  * This script handles PayPal webhooks and marks invoices as paid in WHMCS.
  * You must configure your PayPal app to send webhooks to this URL.
  */
 
+// WHMCS Gateway Callback File Template
 require_once __DIR__ . '/../../../init.php';
 require_once __DIR__ . '/../../../includes/gatewayfunctions.php';
 require_once __DIR__ . '/../../../includes/invoicefunctions.php';
 
 $gatewayModuleName = 'paypalcustom';
 $gatewayParams = getGatewayVariables($gatewayModuleName);
+
 if (!$gatewayParams['type']) {
     die('Module Not Activated');
 }
@@ -94,22 +98,38 @@ function paypalcustom_addPayPalFeeToInvoice($invoiceId, $feeAmount, $feePercent,
     
     // Check if PayPal fee already added
     if (isset($invoice['items']['item'])) {
-        foreach ($invoice['items']['item'] as $item) {
-            if (strpos($item['description'], 'PayPal Payment Gateway Fee') !== false) {
+        if (is_array($invoice['items']['item'])) {
+            // Multiple items
+            foreach ($invoice['items']['item'] as $item) {
+                if (strpos($item['description'], 'PayPal Payment Gateway Fee') !== false) {
+                    return true; // Fee already added
+                }
+            }
+        } else {
+            // Single item
+            if (strpos($invoice['items']['item']['description'], 'PayPal Payment Gateway Fee') !== false) {
                 return true; // Fee already added
             }
         }
     }
     
-    // Add PayPal fee as new invoice item
+    // Add PayPal fee as new invoice item using AddInvoicePayment API
+    $command = 'AddInvoicePayment';
+    $postData = array(
+        'invoiceid' => $invoiceId,
+        'description' => "PayPal Payment Gateway Fee ({$feePercent}% + {$currency} {$feeFixed})",
+        'amount' => number_format($feeAmount, 2, '.', ''),
+        'fees' => 0,
+        'noemail' => true // Don't send email for fee addition
+    );
+    
+    // Actually, let's use UpdateInvoice to add line item instead
     $command = 'UpdateInvoice';
     $postData = array(
         'invoiceid' => $invoiceId,
-        'newlineitem' => array(
-            'description' => "PayPal Payment Gateway Fee ({$feePercent}% + {$currency} {$feeFixed})",
-            'amount' => number_format($feeAmount, 2, '.', ''),
-            'taxed' => false // Usually payment gateway fees are not taxed
-        )
+        'itemdescription' => array("PayPal Payment Gateway Fee ({$feePercent}% + {$currency} {$feeFixed})"),
+        'itemamount' => array(number_format($feeAmount, 2, '.', '')),
+        'itemtaxed' => array('0') // Usually payment gateway fees are not taxed
     );
     
     $result = localAPI($command, $postData);
@@ -121,14 +141,17 @@ function paypalcustom_addPayPalFeeToInvoice($invoiceId, $feeAmount, $feePercent,
             'fee_percent' => $feePercent,
             'fee_fixed' => $feeFixed,
             'original_amount' => $originalAmount,
-            'currency' => $currency
+            'currency' => $currency,
+            'api_result' => $result
         ], 'PayPal Fee Added to Invoice Successfully');
         return true;
     } else {
         logTransaction('paypalcustom', [
             'invoice_id' => $invoiceId,
             'error' => $result,
-            'fee_amount' => $feeAmount
+            'fee_amount' => $feeAmount,
+            'command_used' => $command,
+            'post_data' => $postData
         ], 'Failed to Add PayPal Fee to Invoice');
         return false;
     }
@@ -261,16 +284,20 @@ if (isset($event['event_type']) && $event['event_type'] === 'CHECKOUT.ORDER.APPR
             'invoice_id' => $invoiceId,
             'error' => 'Failed to add PayPal fee to invoice'
         ], 'Warning: Could not add PayPal fee to invoice');
-    }
-    
-    // Step 2: Determine the amount to add as payment
-    // For currency conversion: if currencies match, use captured amount; otherwise use total with fees
-    if ($originalCurrency === $capturedCurrency) {
-        // Same currency - use the actual captured amount
-        $amountToAdd = $capturedAmount;
+        
+        // If we can't add the fee, just mark invoice as paid with original amount
+        $amountToAdd = ($originalCurrency === $capturedCurrency) ? $originalAmount : $originalAmount;
     } else {
-        // Different currencies - use original amount + calculated fee
-        $amountToAdd = $originalAmount + $calculatedFee;
+        // Fee added successfully, get updated invoice total
+        $updatedInvoiceDetails = paypalcustom_getInvoiceDetails($invoiceId);
+        if ($updatedInvoiceDetails['result'] === 'success') {
+            $newInvoiceTotal = $updatedInvoiceDetails['total'];
+            // Use the new invoice total (original + fee)
+            $amountToAdd = ($originalCurrency === $capturedCurrency) ? $capturedAmount : $newInvoiceTotal;
+        } else {
+            // Fallback: use calculated amount
+            $amountToAdd = ($originalCurrency === $capturedCurrency) ? $capturedAmount : ($originalAmount + $calculatedFee);
+        }
     }
     
     // Step 3: Log the successful payment with currency and fee details
