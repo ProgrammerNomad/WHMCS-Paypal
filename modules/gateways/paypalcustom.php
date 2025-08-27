@@ -204,7 +204,22 @@ function paypalcustom_link($params)
     if (!$approveUrl) {
         return '<div class="alert alert-danger">PayPal API error: No approval link found.</div>';
     }
-    $html = '<a href="' . htmlspecialchars($approveUrl) . '" class="btn btn-primary" target="_blank">Pay with PayPal (Total: ' . $totalAmount . ' ' . htmlspecialchars($currency) . ')</a>';
+    // Add message logic here, before the payment button
+    $messages = [];
+    if (isset($_GET['cancelled']) && $_GET['cancelled'] == 1) {
+        $messages[] = '<div class="alert alert-warning"><strong>Payment Cancelled:</strong> You have cancelled the PayPal payment. Please try again.</div>';
+    }
+    if (isset($_GET['status']) && $_GET['status'] == 'waitingconfirmation') {
+        $messages[] = '<div class="alert alert-info"><strong>Please Wait:</strong> Payment is processing. Please wait for confirmation.</div>';
+    }
+
+    $messageHtml = '';
+    if (!empty($messages)) {
+        $messageHtml = implode('', $messages);
+    }
+
+    // Now build the full HTML, including messages before the button
+    $html = $messageHtml . '<a href="' . htmlspecialchars($approveUrl) . '" class="btn btn-primary" target="_blank">Pay with PayPal (Total: ' . $totalAmount . ' ' . htmlspecialchars($currency) . ')</a>';
     $html .= '<br><small>PayPal fees applicable: ' . $feePercent . '% + $' . $feeFixed . ' (Total fee: $' . $fee . ')</small>';
     return $html;
 }
