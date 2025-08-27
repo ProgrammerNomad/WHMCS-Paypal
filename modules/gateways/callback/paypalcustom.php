@@ -75,6 +75,65 @@ function paypalcustom_getAccessToken_callback($clientId, $clientSecret, $mode) {
     return $data['access_token'] ?? false;
 }
 
+// Get invoice details for currency conversion
+function paypalcustom_getInvoiceDetails($invoiceId) {
+    $command = 'GetInvoice';
+    $postData = array(
+        'invoiceid' => $invoiceId,
+    );
+    $results = localAPI($command, $postData);
+    return $results;
+}
+
+// Add PayPal fee as invoice line item
+function paypalcustom_addPayPalFeeToInvoice($invoiceId, $feeAmount, $feePercent, $feeFixed, $originalAmount, $currency) {
+    // Check if PayPal fee item already exists to avoid duplicates
+    $command = 'GetInvoice';
+    $postData = array('invoiceid' => $invoiceId);
+    $invoice = localAPI($command, $postData);
+    
+    // Check if PayPal fee already added
+    if (isset($invoice['items']['item'])) {
+        foreach ($invoice['items']['item'] as $item) {
+            if (strpos($item['description'], 'PayPal Payment Gateway Fee') !== false) {
+                return true; // Fee already added
+            }
+        }
+    }
+    
+    // Add PayPal fee as new invoice item
+    $command = 'UpdateInvoice';
+    $postData = array(
+        'invoiceid' => $invoiceId,
+        'newlineitem' => array(
+            'description' => "PayPal Payment Gateway Fee ({$feePercent}% + {$currency} {$feeFixed})",
+            'amount' => number_format($feeAmount, 2, '.', ''),
+            'taxed' => false // Usually payment gateway fees are not taxed
+        )
+    );
+    
+    $result = localAPI($command, $postData);
+    
+    if ($result['result'] === 'success') {
+        logTransaction('paypalcustom', [
+            'invoice_id' => $invoiceId,
+            'fee_amount' => $feeAmount,
+            'fee_percent' => $feePercent,
+            'fee_fixed' => $feeFixed,
+            'original_amount' => $originalAmount,
+            'currency' => $currency
+        ], 'PayPal Fee Added to Invoice Successfully');
+        return true;
+    } else {
+        logTransaction('paypalcustom', [
+            'invoice_id' => $invoiceId,
+            'error' => $result,
+            'fee_amount' => $feeAmount
+        ], 'Failed to Add PayPal Fee to Invoice');
+        return false;
+    }
+}
+
 $accessToken = paypalcustom_getAccessToken_callback($paypalClientId, $paypalClientSecret, $paypalMode);
 if (!$accessToken) {
     header('HTTP/1.1 401 Unauthorized');
@@ -115,10 +174,138 @@ if (empty($verifyData['verification_status']) || $verifyData['verification_statu
     exit;
 }
 
-// Handle Payment Capture Completed (AUTO-CAPTURE)
+// Handle Order Approved - Capture Payment Automatically
+if (isset($event['event_type']) && $event['event_type'] === 'CHECKOUT.ORDER.APPROVED') {
+    $orderId = $event['resource']['id'];
+    $invoiceId = $event['resource']['purchase_units'][0]['custom_id'] ?? $event['resource']['purchase_units'][0]['reference_id'];
+    $paypalAmount = $event['resource']['purchase_units'][0]['amount']['value'];
+    $paypalCurrency = $event['resource']['purchase_units'][0]['amount']['currency_code'];
+    
+    if (!$invoiceId) {
+        logTransaction($gatewayParams['paymentmethod'], $event, 'Order Approved - Invoice ID not found');
+        header('HTTP/1.1 400 Bad Request');
+        echo 'Invoice ID not found in order data.';
+        exit;
+    }
+    
+    // Get invoice details to check original currency and amount
+    $invoiceDetails = paypalcustom_getInvoiceDetails($invoiceId);
+    if ($invoiceDetails['result'] !== 'success') {
+        logTransaction($gatewayParams['paymentmethod'], $event, 'Order Approved - Could not fetch invoice details');
+        header('HTTP/1.1 400 Bad Request');
+        echo 'Could not fetch invoice details.';
+        exit;
+    }
+    
+    $originalCurrency = $invoiceDetails['currency'];
+    $originalAmount = $invoiceDetails['total'];
+    
+    // Calculate PayPal fees (from gateway configuration)
+    $feePercent = (float)($gatewayParams['feePercent'] ?? 0);
+    $feeFixed = (float)($gatewayParams['feeFixed'] ?? 0);
+    $calculatedFee = round(($originalAmount * $feePercent / 100) + $feeFixed, 2);
+    
+    // Capture the order to complete payment
+    $captureUrl = $paypalMode === 'sandbox' 
+        ? "https://api.sandbox.paypal.com/v2/checkout/orders/{$orderId}/capture"
+        : "https://api.paypal.com/v2/checkout/orders/{$orderId}/capture";
+    
+    $ch = curl_init($captureUrl);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'Authorization: Bearer ' . $accessToken,
+    ]);
+    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, '{}'); // Empty JSON body for capture
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 1);
+    $captureResult = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    $captureData = json_decode($captureResult, true);
+    
+    if ($httpCode !== 201 || empty($captureData['status']) || $captureData['status'] !== 'COMPLETED') {
+        logTransaction($gatewayParams['paymentmethod'], [
+            'order_id' => $orderId,
+            'capture_response' => $captureData,
+            'http_code' => $httpCode
+        ], 'Order Capture Failed');
+        header('HTTP/1.1 400 Bad Request');
+        echo 'Failed to capture PayPal order.';
+        exit;
+    }
+    
+    // Extract capture details
+    $captureId = $captureData['purchase_units'][0]['payments']['captures'][0]['id'];
+    $capturedAmount = $captureData['purchase_units'][0]['payments']['captures'][0]['amount']['value'];
+    $capturedCurrency = $captureData['purchase_units'][0]['payments']['captures'][0]['amount']['currency_code'];
+    
+    // Validate invoice ID
+    $invoiceId = checkCbInvoiceID($invoiceId, $gatewayParams['paymentmethod']);
+    // Check for duplicate transaction
+    checkCbTransID($captureId);
+    
+    // Step 1: Add PayPal fee to invoice as line item (BEFORE marking as paid)
+    $feeAdded = paypalcustom_addPayPalFeeToInvoice(
+        $invoiceId, 
+        $calculatedFee, 
+        $feePercent, 
+        $feeFixed, 
+        $originalAmount, 
+        $originalCurrency
+    );
+    
+    if (!$feeAdded) {
+        logTransaction($gatewayParams['paymentmethod'], [
+            'invoice_id' => $invoiceId,
+            'error' => 'Failed to add PayPal fee to invoice'
+        ], 'Warning: Could not add PayPal fee to invoice');
+    }
+    
+    // Step 2: Determine the amount to add as payment
+    // For currency conversion: if currencies match, use captured amount; otherwise use total with fees
+    if ($originalCurrency === $capturedCurrency) {
+        // Same currency - use the actual captured amount
+        $amountToAdd = $capturedAmount;
+    } else {
+        // Different currencies - use original amount + calculated fee
+        $amountToAdd = $originalAmount + $calculatedFee;
+    }
+    
+    // Step 3: Log the successful payment with currency and fee details
+    logTransaction($gatewayParams['paymentmethod'], [
+        'order_id' => $orderId,
+        'capture_id' => $captureId,
+        'paypal_amount' => $capturedAmount,
+        'paypal_currency' => $capturedCurrency,
+        'invoice_amount' => $originalAmount,
+        'invoice_currency' => $originalCurrency,
+        'calculated_fee' => $calculatedFee,
+        'fee_added_to_invoice' => $feeAdded,
+        'amount_added_to_invoice' => $amountToAdd,
+        'capture_data' => $captureData
+    ], 'Payment Captured Successfully with Fee Added to Invoice');
+    
+    // Step 4: Add payment to invoice (now including the fee in total)
+    addInvoicePayment(
+        $invoiceId,
+        $captureId,
+        $amountToAdd, // Total amount including fees
+        0, // Payment fee (set to 0 since we added it as line item)
+        $gatewayParams['paymentmethod']
+    );
+    
+    header('HTTP/1.1 200 OK');
+    echo 'Payment captured, PayPal fee added to invoice, and invoice marked as paid.';
+    exit;
+}
+
+// Handle Payment Capture Completed (if you also want to listen for this)
 if (isset($event['event_type']) && $event['event_type'] === 'PAYMENT.CAPTURE.COMPLETED') {
     $captureId = $event['resource']['id'];
-    $paymentAmount = $event['resource']['amount']['value'];
+    $paypalAmount = $event['resource']['amount']['value'];
+    $paypalCurrency = $event['resource']['amount']['currency_code'];
     
     // Get invoice ID from custom_id or supplementary_data
     $invoiceId = null;
@@ -155,25 +342,69 @@ if (isset($event['event_type']) && $event['event_type'] === 'PAYMENT.CAPTURE.COM
         exit;
     }
     
+    // Get invoice details to check original currency and amount
+    $invoiceDetails = paypalcustom_getInvoiceDetails($invoiceId);
+    if ($invoiceDetails['result'] !== 'success') {
+        logTransaction($gatewayParams['paymentmethod'], $event, 'Payment Capture Completed - Could not fetch invoice details');
+        header('HTTP/1.1 400 Bad Request');
+        echo 'Could not fetch invoice details.';
+        exit;
+    }
+    
+    $originalCurrency = $invoiceDetails['currency'];
+    $originalAmount = $invoiceDetails['total'];
+    
+    // Calculate PayPal fees (from gateway configuration)
+    $feePercent = (float)($gatewayParams['feePercent'] ?? 0);
+    $feeFixed = (float)($gatewayParams['feeFixed'] ?? 0);
+    $calculatedFee = round(($originalAmount * $feePercent / 100) + $feeFixed, 2);
+    
     // Validate invoice ID
     $invoiceId = checkCbInvoiceID($invoiceId, $gatewayParams['paymentmethod']);
     // Check for duplicate transaction
     checkCbTransID($captureId);
     
-    // Log the successful payment
-    logTransaction($gatewayParams['paymentmethod'], $event, 'Payment Completed Successfully (Auto-Capture)');
+    // Step 1: Add PayPal fee to invoice as line item (BEFORE marking as paid)
+    $feeAdded = paypalcustom_addPayPalFeeToInvoice(
+        $invoiceId, 
+        $calculatedFee, 
+        $feePercent, 
+        $feeFixed, 
+        $originalAmount, 
+        $originalCurrency
+    );
     
-    // Add payment to invoice
+    // Step 2: Determine the amount to add as payment
+    if ($originalCurrency === $paypalCurrency) {
+        $amountToAdd = $paypalAmount;
+    } else {
+        $amountToAdd = $originalAmount + $calculatedFee;
+    }
+    
+    // Step 3: Log the successful payment with currency and fee details
+    logTransaction($gatewayParams['paymentmethod'], [
+        'capture_id' => $captureId,
+        'paypal_amount' => $paypalAmount,
+        'paypal_currency' => $paypalCurrency,
+        'invoice_amount' => $originalAmount,
+        'invoice_currency' => $originalCurrency,
+        'calculated_fee' => $calculatedFee,
+        'fee_added_to_invoice' => $feeAdded,
+        'amount_added_to_invoice' => $amountToAdd,
+        'event_data' => $event
+    ], 'Payment Completed Successfully with Fee Added to Invoice (Auto-Capture)');
+    
+    // Step 4: Add payment to invoice (now including the fee in total)
     addInvoicePayment(
         $invoiceId,
         $captureId,
-        $paymentAmount,
-        0, // Payment fee (if any)
+        $amountToAdd, // Total amount including fees
+        0, // Payment fee (set to 0 since we added it as line item)
         $gatewayParams['paymentmethod']
     );
     
     header('HTTP/1.1 200 OK');
-    echo 'Payment completed and invoice marked as paid.';
+    echo 'Payment completed, PayPal fee added to invoice, and invoice marked as paid.';
     exit;
 }
 
