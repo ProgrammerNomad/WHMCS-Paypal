@@ -91,6 +91,10 @@ function paypalcustom_getInvoiceDetails($invoiceId) {
 
 // Add PayPal fee as invoice line item
 function paypalcustom_addPayPalFeeToInvoice($invoiceId, $feeAmount, $feePercent, $feeFixed, $originalAmount, $currency) {
+    if ($feeAmount <= 0) {
+        return true; // No fee to add
+    }
+    
     // Check if PayPal fee item already exists to avoid duplicates
     $command = 'GetInvoice';
     $postData = array('invoiceid' => $invoiceId);
@@ -98,38 +102,27 @@ function paypalcustom_addPayPalFeeToInvoice($invoiceId, $feeAmount, $feePercent,
     
     // Check if PayPal fee already added
     if (isset($invoice['items']['item'])) {
-        if (is_array($invoice['items']['item'])) {
-            // Multiple items
-            foreach ($invoice['items']['item'] as $item) {
-                if (strpos($item['description'], 'PayPal Payment Gateway Fee') !== false) {
-                    return true; // Fee already added
-                }
-            }
-        } else {
-            // Single item
-            if (strpos($invoice['items']['item']['description'], 'PayPal Payment Gateway Fee') !== false) {
+        $items = $invoice['items']['item'];
+        // Handle both single item and multiple items cases
+        if (!isset($items[0])) {
+            $items = array($items); // Convert single item to array
+        }
+        
+        foreach ($items as $item) {
+            if (strpos($item['description'], 'PayPal Payment Gateway Fee') !== false || 
+                strpos($item['description'], 'PayPal Processing Fee') !== false) {
                 return true; // Fee already added
             }
         }
     }
     
-    // Add PayPal fee as new invoice item using AddInvoicePayment API
-    $command = 'AddInvoicePayment';
+    // Add PayPal fee as new invoice line item using the correct API
+    $command = 'AddInvoiceItem';
     $postData = array(
         'invoiceid' => $invoiceId,
-        'description' => "PayPal Payment Gateway Fee ({$feePercent}% + {$currency} {$feeFixed})",
+        'description' => "PayPal Processing Fee ({$feePercent}% + {$currency} {$feeFixed})",
         'amount' => number_format($feeAmount, 2, '.', ''),
-        'fees' => 0,
-        'noemail' => true // Don't send email for fee addition
-    );
-    
-    // Actually, let's use UpdateInvoice to add line item instead
-    $command = 'UpdateInvoice';
-    $postData = array(
-        'invoiceid' => $invoiceId,
-        'itemdescription' => array("PayPal Payment Gateway Fee ({$feePercent}% + {$currency} {$feeFixed})"),
-        'itemamount' => array(number_format($feeAmount, 2, '.', '')),
-        'itemtaxed' => array('0') // Usually payment gateway fees are not taxed
+        'taxed' => false // Usually payment gateway fees are not taxed
     );
     
     $result = localAPI($command, $postData);
