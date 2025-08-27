@@ -116,7 +116,21 @@ function paypalcustom_getInvoiceDetails($invoiceId) {
 
 // Add PayPal fee as invoice line item
 function paypalcustom_addPayPalFeeToInvoice($invoiceId, $feeAmount, $feePercent, $feeFixed, $originalAmount, $currency) {
+    // Log the fee addition attempt
+    logTransaction('paypalcustom', [
+        'invoice_id' => $invoiceId,
+        'fee_amount' => $feeAmount,
+        'fee_percent' => $feePercent,
+        'fee_fixed' => $feeFixed,
+        'original_amount' => $originalAmount,
+        'currency' => $currency
+    ], 'PayPal Fee Addition Attempt');
+    
     if ($feeAmount <= 0) {
+        logTransaction('paypalcustom', [
+            'invoice_id' => $invoiceId,
+            'fee_amount' => $feeAmount
+        ], 'No PayPal fee to add (amount is zero or negative)');
         return true; // No fee to add
     }
     
@@ -136,6 +150,10 @@ function paypalcustom_addPayPalFeeToInvoice($invoiceId, $feeAmount, $feePercent,
         foreach ($items as $item) {
             if (strpos($item['description'], 'PayPal Payment Gateway Fee') !== false || 
                 strpos($item['description'], 'PayPal Processing Fee') !== false) {
+                logTransaction('paypalcustom', [
+                    'invoice_id' => $invoiceId,
+                    'existing_fee_item' => $item
+                ], 'PayPal fee already exists on invoice');
                 return true; // Fee already added
             }
         }
@@ -149,6 +167,8 @@ function paypalcustom_addPayPalFeeToInvoice($invoiceId, $feeAmount, $feePercent,
         'amount' => number_format($feeAmount, 2, '.', ''),
         'taxed' => false // Usually payment gateway fees are not taxed
     );
+    
+    logTransaction('paypalcustom', $postData, 'Adding PayPal fee line item to invoice');
     
     $result = localAPI($command, $postData);
     
@@ -241,9 +261,9 @@ if (isset($event['event_type']) && $event['event_type'] === 'CHECKOUT.ORDER.APPR
     $originalCurrency = $invoiceDetails['currency'];
     $originalAmount = $invoiceDetails['total'];
     
-    // Calculate PayPal fees (from gateway configuration)
-    $feePercent = (float)($gatewayParams['feePercent'] ?? 0);
-    $feeFixed = (float)($gatewayParams['feeFixed'] ?? 0);
+    // Calculate PayPal fees (from gateway configuration) - for order capture
+    $feePercent = (float)($gatewayParams['feePercent'] ?? 5.95);
+    $feeFixed = (float)($gatewayParams['feeFixed'] ?? 0.30);
     $calculatedFee = round(($originalAmount * $feePercent / 100) + $feeFixed, 2);
     
     // Capture the order to complete payment
@@ -399,9 +419,20 @@ if (isset($event['event_type']) && $event['event_type'] === 'PAYMENT.CAPTURE.COM
     $originalCurrency = $invoiceDetails['currency'];
     $originalAmount = $invoiceDetails['total'];
     
-    // Calculate PayPal fees (from gateway configuration)
-    $feePercent = (float)($gatewayParams['feePercent'] ?? 0);
-    $feeFixed = (float)($gatewayParams['feeFixed'] ?? 0);
+    // Calculate PayPal fees (from gateway configuration) - for payment processing
+    $feePercent = (float)($gatewayParams['feePercent'] ?? 5.95);
+    $feeFixed = (float)($gatewayParams['feeFixed'] ?? 0.30);
+    
+    // Debug: Log the fee parameters to verify they're being retrieved correctly
+    logTransaction($gatewayParams['paymentmethod'], [
+        'fee_percent_raw' => $gatewayParams['feePercent'] ?? 'not set',
+        'fee_fixed_raw' => $gatewayParams['feeFixed'] ?? 'not set', 
+        'fee_percent_calculated' => $feePercent,
+        'fee_fixed_calculated' => $feeFixed,
+        'original_amount' => $originalAmount,
+        'original_currency' => $originalCurrency
+    ], 'PayPal Fee Parameters Debug');
+    
     $calculatedFee = round(($originalAmount * $feePercent / 100) + $feeFixed, 2);
     
     // Validate invoice ID
