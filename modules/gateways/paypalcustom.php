@@ -219,12 +219,7 @@ function paypalcustom_link($params)
                 if (countdownElement) countdownElement.textContent = timeLeft;
                 if (timeLeft <= 0) {
                     clearInterval(timer);
-                    var url = new URL(window.location);
-                    url.searchParams.delete("status");
-                    url.searchParams.delete("gateway");
-                    url.searchParams.delete("token");
-                    url.searchParams.delete("PayerID");
-                    window.location.href = url.toString();
+                    window.location.reload();  // Reload the current URL with all parameters intact
                 }
             }, 1000);
         </script>';
