@@ -459,62 +459,69 @@ function paypalcustom_addPayPalFeeToInvoice($invoiceId, $feeAmount, $feePercent,
     }
     
     // Check if PayPal fee item already exists to avoid duplicates
-    $command = 'GetInvoice';
-    $postData = array('invoiceid' => $invoiceId);
-    $invoice = localAPI($command, $postData);
-    
-    // Check if PayPal fee already added
-    if (isset($invoice['items']['item'])) {
-        $items = $invoice['items']['item'];
-        // Handle both single item and multiple items cases
-        if (!isset($items[0])) {
-            $items = array($items); // Convert single item to array
-        }
+    try {
+        $existingFee = \Illuminate\Database\Capsule\Manager::table('tblinvoiceitems')
+            ->where('invoiceid', $invoiceId)
+            ->where('description', 'like', '%PayPal%Fee%')
+            ->first();
         
-        foreach ($items as $item) {
-            if (strpos($item['description'], 'PayPal Payment Gateway Fee') !== false || 
-                strpos($item['description'], 'PayPal Processing Fee') !== false) {
-                logTransaction('paypalcustom', [
-                    'invoice_id' => $invoiceId,
-                    'existing_fee_item' => $item
-                ], 'PayPal fee already exists on invoice');
-                return true; // Fee already added
-            }
+        if ($existingFee) {
+            logTransaction('paypalcustom', [
+                'invoice_id' => $invoiceId,
+                'existing_fee_item' => $existingFee
+            ], 'PayPal fee already exists on invoice');
+            return true; // Fee already added
         }
+    } catch (\Exception $e) {
+        logTransaction('paypalcustom', [
+            'invoice_id' => $invoiceId,
+            'error' => $e->getMessage()
+        ], 'Error checking for existing PayPal fee');
+        return false;
     }
     
-    // Add PayPal fee as new invoice line item using the correct API
-    $command = 'AddInvoiceItem';
-    $postData = array(
-        'invoiceid' => $invoiceId,
-        'description' => "PayPal Processing Fee ({$feePercent}% + {$currency} {$feeFixed})",
-        'amount' => number_format($feeAmount, 2, '.', ''),
-        'taxed' => false // Usually payment gateway fees are not taxed
-    );
-    
-    logTransaction('paypalcustom', $postData, 'Adding PayPal fee line item to invoice');
-    
-    $result = localAPI($command, $postData);
-    
-    if ($result['result'] === 'success') {
+    // Add PayPal fee as new invoice line item using direct database insert
+    try {
+        $insertData = [
+            'invoiceid' => $invoiceId,
+            'userid' => 0, // Default, or fetch from invoice if needed
+            'type' => 'Item', // Standard item type
+            'relid' => 0, // No related product
+            'description' => "PayPal Processing Fee ({$feePercent}% + {$currency} {$feeFixed})",
+            'amount' => $feeAmount,
+            'taxed' => 0, // Not taxed
+            'duedate' => date('Y-m-d'), // Today's date
+            'paymentmethod' => 'paypalcustom',
+            'notes' => ''
+        ];
+        
+        $inserted = \Illuminate\Database\Capsule\Manager::table('tblinvoiceitems')->insert($insertData);
+        
+        if ($inserted) {
+            logTransaction('paypalcustom', [
+                'invoice_id' => $invoiceId,
+                'fee_amount' => $feeAmount,
+                'fee_percent' => $feePercent,
+                'fee_fixed' => $feeFixed,
+                'original_amount' => $originalAmount,
+                'currency' => $currency,
+                'insert_data' => $insertData
+            ], 'PayPal Fee Added to Invoice Successfully via Database');
+            return true;
+        } else {
+            logTransaction('paypalcustom', [
+                'invoice_id' => $invoiceId,
+                'error' => 'Insert failed',
+                'insert_data' => $insertData
+            ], 'Failed to Add PayPal Fee to Invoice via Database');
+            return false;
+        }
+    } catch (\Exception $e) {
         logTransaction('paypalcustom', [
             'invoice_id' => $invoiceId,
-            'fee_amount' => $feeAmount,
-            'fee_percent' => $feePercent,
-            'fee_fixed' => $feeFixed,
-            'original_amount' => $originalAmount,
-            'currency' => $currency,
-            'api_result' => $result
-        ], 'PayPal Fee Added to Invoice Successfully');
-        return true;
-    } else {
-        logTransaction('paypalcustom', [
-            'invoice_id' => $invoiceId,
-            'error' => $result,
-            'fee_amount' => $feeAmount,
-            'command_used' => $command,
-            'post_data' => $postData
-        ], 'Failed to Add PayPal Fee to Invoice');
+            'error' => $e->getMessage(),
+            'insert_data' => $insertData ?? []
+        ], 'Exception Adding PayPal Fee to Invoice via Database');
         return false;
     }
 }
