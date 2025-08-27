@@ -162,7 +162,8 @@ function paypalcustom_link($params)
         'intent' => 'CAPTURE',
         'purchase_units' => [[
             'reference_id' => $invoiceId,
-            'custom_id' => $invoiceId, // Add custom_id for easier webhook tracking
+            'custom_id' => $invoiceId,
+            'invoice_id' => $invoiceId, // Add invoice_id for easier webhook tracking
             'description' => $description,
             'amount' => [
                 'currency_code' => $currency,
@@ -170,8 +171,8 @@ function paypalcustom_link($params)
             ],
         ]],
         'application_context' => [
-            'return_url' => $systemUrl . 'viewinvoice.php?id=' . $invoiceId . '&status=waitingconfirmation&gateway=paypalcustom',
-            'cancel_url' => $systemUrl . 'viewinvoice.php?id=' . $invoiceId . '&status=cancelled&gateway=paypalcustom',
+            'return_url' => $systemUrl . 'modules/gateways/callback/paypalcustom.php?id=' . $invoiceId,
+            'cancel_url' => $systemUrl . 'modules/gateways/callback/paypalcustom.php?id=' . $invoiceId . '&cancel=1',
         ],
     ];
 

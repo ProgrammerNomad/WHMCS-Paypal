@@ -1,44 +1,20 @@
 <?php
 
 /**
- * PayPal Custom Payment Gateway Webhook Callback
+ * PayPal Custom Payment Gateway Callback Handler
  * 
  * For WHMCS 8.13.1+
  * Place this file at modules/gateways/callback/paypalcustom.php
  * 
- * This script handles PayPal webhooks and marks invoices as paid in WHMCS.
- * You must configure your PayPal app to send webhooks to this URL.
+ * This script handles:
+ * 1. PayPal webhooks (POST requests) - for payment notifications
+ * 2. Return URLs (GET requests) - when users return from PayPal
  */
 
 // WHMCS Gateway Callback File Template
 require_once __DIR__ . '/../../../init.php';
 require_once __DIR__ . '/../../../includes/gatewayfunctions.php';
 require_once __DIR__ . '/../../../includes/invoicefunctions.php';
-
-// Handle AJAX status check requests
-if (isset($_GET['check']) && isset($_GET['invoiceid'])) {
-    $invoiceId = (int)$_GET['invoiceid'];
-    
-    try {
-        $invoice = localAPI('GetInvoice', ['invoiceid' => $invoiceId]);
-        
-        header('Content-Type: application/json');
-        
-        if ($invoice['result'] === 'success') {
-            echo json_encode([
-                'status' => strtolower($invoice['status']),
-                'balance' => $invoice['balance'],
-                'total' => $invoice['total']
-            ]);
-        } else {
-            echo json_encode(['status' => 'unknown', 'error' => $invoice['message'] ?? 'Invoice not found']);
-        }
-    } catch (Exception $e) {
-        header('Content-Type: application/json');
-        echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
-    }
-    exit;
-}
 
 $gatewayModuleName = 'paypalcustom';
 $gatewayParams = getGatewayVariables($gatewayModuleName);
@@ -47,27 +23,81 @@ if (!$gatewayParams['type']) {
     die('Module Not Activated');
 }
 
-// Handle PayPal Return URLs (success/cancel)
-if (isset($_GET['success']) && $_GET['success'] == '1') {
-    $invoiceId = (int)$_GET['invoiceid'];
-    if ($invoiceId) {
-        header('Location: ' . $CONFIG['SystemURL'] . '/viewinvoice.php?id=' . $invoiceId);
-        exit;
-    }
+// Determine request type
+$requestMethod = $_SERVER['REQUEST_METHOD'];
+
+if ($requestMethod === 'GET') {
+    // Handle PayPal return URLs (success, cancel, etc.)
+    handleReturnURL($gatewayParams);
+} else {
+    // Handle PayPal webhooks (POST requests)
+    handleWebhook($gatewayParams);
 }
 
-if (isset($_GET['cancel']) && $_GET['cancel'] == '1') {
-    $invoiceId = (int)$_GET['invoiceid'];
-    if ($invoiceId) {
-        header('Location: ' . $CONFIG['SystemURL'] . '/viewinvoice.php?id=' . $invoiceId . '&paymentfailed=1');
+/**
+ * Handle PayPal return URLs (GET requests)
+ */
+function handleReturnURL($gatewayParams) {
+    $invoiceId = $_GET['id'] ?? $_GET['invoiceid'] ?? null;
+    $token = $_GET['token'] ?? null;
+    $PayerID = $_GET['PayerID'] ?? null;
+    $status = $_GET['status'] ?? null;
+    
+    // If user cancelled payment
+    if (isset($_GET['cancel']) || $status === 'cancelled') {
+        if ($invoiceId) {
+            // Redirect to invoice with cancelled status
+            $redirectUrl = $gatewayParams['systemurl'] . 'viewinvoice.php?id=' . $invoiceId . '&status=cancelled&gateway=paypalcustom';
+            header('Location: ' . $redirectUrl);
+            exit;
+        }
+    }
+    
+    // If user completed payment on PayPal
+    if ($token && $PayerID && $invoiceId) {
+        // Log the return
+        logTransaction($gatewayParams['paymentmethod'], [
+            'invoice_id' => $invoiceId,
+            'token' => $token,
+            'payer_id' => $PayerID,
+            'action' => 'return_from_paypal'
+        ], 'User returned from PayPal - Payment pending webhook confirmation');
+        
+        // Redirect to invoice with waiting confirmation status
+        $redirectUrl = $gatewayParams['systemurl'] . 'viewinvoice.php?id=' . $invoiceId . 
+                      '&status=waitingconfirmation&gateway=paypalcustom&token=' . urlencode($token) . 
+                      '&PayerID=' . urlencode($PayerID);
+        header('Location: ' . $redirectUrl);
         exit;
     }
+    
+    // Default redirect if something went wrong
+    if ($invoiceId) {
+        $redirectUrl = $gatewayParams['systemurl'] . 'viewinvoice.php?id=' . $invoiceId;
+        header('Location: ' . $redirectUrl);
+        exit;
+    }
+    
+    // No invoice ID - redirect to client area
+    header('Location: ' . $gatewayParams['systemurl'] . 'clientarea.php');
+    exit;
 }
+
+/**
+ * Handle PayPal webhooks (POST requests)
+ */
+function handleWebhook($gatewayParams) {
 
 // Handle PayPal Webhook
 $body = file_get_contents('php://input');
 $headers = getallheaders();
 $event = json_decode($body, true);
+
+// Validate that this is a webhook call
+if (!$event || !isset($event['event_type'])) {
+    http_response_code(400);
+    die('Invalid webhook data');
+}
 
 // Log all webhook events for debugging
 logTransaction($gatewayParams['paymentmethod'], $event, 'Webhook Received: ' . ($event['event_type'] ?? 'Unknown'));
@@ -489,5 +519,7 @@ if (isset($event['event_type'])) {
     logTransaction($gatewayParams['paymentmethod'], $event, 'Unhandled Webhook Event: ' . $event['event_type']);
 }
 
-header('HTTP/1.1 200 OK');
-echo 'Webhook received but not processed.';
+// Always return 200 OK to acknowledge webhook receipt
+http_response_code(200);
+echo 'OK';
+?>
