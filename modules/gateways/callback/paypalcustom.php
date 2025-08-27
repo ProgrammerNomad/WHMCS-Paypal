@@ -15,6 +15,31 @@ require_once __DIR__ . '/../../../init.php';
 require_once __DIR__ . '/../../../includes/gatewayfunctions.php';
 require_once __DIR__ . '/../../../includes/invoicefunctions.php';
 
+// Handle AJAX status check requests
+if (isset($_GET['check']) && isset($_GET['invoiceid'])) {
+    $invoiceId = (int)$_GET['invoiceid'];
+    
+    try {
+        $invoice = localAPI('GetInvoice', ['invoiceid' => $invoiceId]);
+        
+        header('Content-Type: application/json');
+        
+        if ($invoice['result'] === 'success') {
+            echo json_encode([
+                'status' => strtolower($invoice['status']),
+                'balance' => $invoice['balance'],
+                'total' => $invoice['total']
+            ]);
+        } else {
+            echo json_encode(['status' => 'unknown', 'error' => $invoice['message'] ?? 'Invoice not found']);
+        }
+    } catch (Exception $e) {
+        header('Content-Type: application/json');
+        echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+    }
+    exit;
+}
+
 $gatewayModuleName = 'paypalcustom';
 $gatewayParams = getGatewayVariables($gatewayModuleName);
 

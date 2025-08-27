@@ -170,8 +170,8 @@ function paypalcustom_link($params)
             ],
         ]],
         'application_context' => [
-            'return_url' => $systemUrl . 'modules/gateways/callback/paypalcustom.php?success=1&invoiceid=' . $invoiceId,
-            'cancel_url' => $systemUrl . 'modules/gateways/callback/paypalcustom.php?cancel=1&invoiceid=' . $invoiceId,
+            'return_url' => $systemUrl . 'viewinvoice.php?id=' . $invoiceId . '&status=waitingconfirmation&gateway=paypalcustom',
+            'cancel_url' => $systemUrl . 'viewinvoice.php?id=' . $invoiceId . '&status=cancelled&gateway=paypalcustom',
         ],
     ];
 
