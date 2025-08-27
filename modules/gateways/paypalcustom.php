@@ -158,12 +158,17 @@ function paypalcustom_link($params)
     }
 
     $apiUrl = $mode === 'sandbox' ? 'https://api.sandbox.paypal.com/v2/checkout/orders' : 'https://api.paypal.com/v2/checkout/orders';
+
+    // Generate a unique invoice_id for PayPal (to avoid DUPLICATE_INVOICE_ID)
+    // Keep the original invoice ID in custom_id for webhook retrieval
+    $uniqueInvoiceId = $invoiceId . '_' . time() . '_' . substr(md5(uniqid()), 0, 8); // Unique per attempt
+
     $orderData = [
         'intent' => 'CAPTURE',
         'purchase_units' => [[
-            'reference_id' => $invoiceId,
-            'custom_id' => $invoiceId,
-            'invoice_id' => $invoiceId, // Add invoice_id for easier webhook tracking
+            'reference_id' => $invoiceId, // Original invoice ID
+            'custom_id' => $invoiceId,    // Original invoice ID for webhook
+            'invoice_id' => $uniqueInvoiceId, // Unique ID for PayPal
             'description' => $description,
             'amount' => [
                 'currency_code' => $currency,
