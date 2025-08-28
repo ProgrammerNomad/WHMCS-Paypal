@@ -313,6 +313,97 @@ function paypalcustom_getInvoiceDetails($invoiceId) {
     return $results;
 }
 
+// Add PayPal fee as invoice line item
+function paypalcustom_addPayPalFeeToInvoice($invoiceId, $feeAmount, $feePercent, $feeFixed, $originalAmount, $currency) {
+    // Log the fee addition attempt
+    logTransaction('paypalcustom', [
+        'invoice_id' => $invoiceId,
+        'fee_amount' => $feeAmount,
+        'fee_percent' => $feePercent,
+        'fee_fixed' => $feeFixed,
+        'original_amount' => $originalAmount,
+        'currency' => $currency  // Log currency for debugging
+    ], 'PayPal Fee Addition Attempt');
+    
+    if ($feeAmount <= 0) {
+        logTransaction('paypalcustom', [
+            'invoice_id' => $invoiceId,
+            'fee_amount' => $feeAmount
+        ], 'No PayPal fee to add (amount is zero or negative)');
+        return true; // No fee to add
+    }
+    
+    // Check if PayPal fee item already exists to avoid duplicates
+    try {
+        $existingFee = \Illuminate\Database\Capsule\Manager::table('tblinvoiceitems')
+            ->where('invoiceid', $invoiceId)
+            ->where('description', 'like', '%PayPal%Fee%')
+            ->first();
+        
+        if ($existingFee) {
+            logTransaction('paypalcustom', [
+                'invoice_id' => $invoiceId,
+                'existing_fee_item' => $existingFee
+            ], 'PayPal fee already exists on invoice');
+            return true; // Fee already added
+        }
+    } catch (\Exception $e) {
+        logTransaction('paypalcustom', [
+            'invoice_id' => $invoiceId,
+            'error' => $e->getMessage()
+        ], 'Error checking for existing PayPal fee');
+        return false;
+    }
+    
+    // Add PayPal fee as new invoice line item using direct database insert
+    try {
+        $insertData = [
+            'invoiceid' => $invoiceId,
+            'userid' => 0, // Default, or fetch from invoice if needed
+            'type' => 'Item', // Standard item type
+            'relid' => 0, // No related product
+            'description' => "PayPal Processing Fee ({$feePercent}% + {$currency} {$feeFixed})", // Include currency in description
+            'amount' => $feeAmount,
+            'taxed' => 0, // Not taxed
+            'duedate' => date('Y-m-d'), // Today's date
+            'paymentmethod' => 'paypalcustom',
+            'notes' => ''
+        ];
+        
+        $inserted = \Illuminate\Database\Capsule\Manager::table('tblinvoiceitems')->insert($insertData);
+        
+        if ($inserted) {
+            // Recalculate the invoice total after adding the fee
+            updateInvoiceTotal($invoiceId);
+            
+            logTransaction('paypalcustom', [
+                'invoice_id' => $invoiceId,
+                'fee_amount' => $feeAmount,
+                'fee_percent' => $feePercent,
+                'fee_fixed' => $feeFixed,
+                'original_amount' => $originalAmount,
+                'currency' => $currency,
+                'insert_data' => $insertData
+            ], 'PayPal Fee Added to Invoice Successfully via Database');
+            return true;
+        } else {
+            logTransaction('paypalcustom', [
+                'invoice_id' => $invoiceId,
+                'error' => 'Insert failed',
+                'insert_data' => $insertData
+            ], 'Failed to Add PayPal Fee to Invoice via Database');
+            return false;
+        }
+    } catch (\Exception $e) {
+        logTransaction('paypalcustom', [
+            'invoice_id' => $invoiceId,
+            'error' => $e->getMessage(),
+            'insert_data' => $insertData ?? []
+        ], 'Exception Adding PayPal Fee to Invoice via Database');
+        return false;
+    }
+}
+
 // Webhook/Callback Handler (to be placed in callback/paypalcustom.php)
 // This file should verify the webhook signature and mark invoice as paid in WHMCS.
 // See README for implementation details.
