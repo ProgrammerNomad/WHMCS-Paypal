@@ -453,132 +453,138 @@ function paypalcustom_getAccessToken_callback($clientId, $clientSecret, $mode) {
 }
 
 // Get invoice details for currency conversion
-function paypalcustom_getInvoiceDetails($invoiceId) {
-    $command = 'GetInvoice';
-    $postData = array(
-        'invoiceid' => $invoiceId,
-    );
-    $results = localAPI($command, $postData);
-    return $results;
+if (!function_exists('paypalcustom_getInvoiceDetails')) {
+    function paypalcustom_getInvoiceDetails($invoiceId) {
+        $command = 'GetInvoice';
+        $postData = array(
+            'invoiceid' => $invoiceId,
+        );
+        $results = localAPI($command, $postData);
+        return $results;
+    }
 }
 
 // Add PayPal fee as invoice line item
-function paypalcustom_addPayPalFeeToInvoice($invoiceId, $feeAmount, $feePercent, $feeFixed, $originalAmount, $currency) {
-    // Log the fee addition attempt
-    logTransaction('paypalcustom', [
-        'invoice_id' => $invoiceId,
-        'fee_amount' => $feeAmount,
-        'fee_percent' => $feePercent,
-        'fee_fixed' => $feeFixed,
-        'original_amount' => $originalAmount,
-        'currency' => $currency  // Log currency for debugging
-    ], 'PayPal Fee Addition Attempt');
-    
-    if ($feeAmount <= 0) {
+if (!function_exists('paypalcustom_addPayPalFeeToInvoice')) {
+    function paypalcustom_addPayPalFeeToInvoice($invoiceId, $feeAmount, $feePercent, $feeFixed, $originalAmount, $currency) {
+        // Log the fee addition attempt
         logTransaction('paypalcustom', [
             'invoice_id' => $invoiceId,
-            'fee_amount' => $feeAmount
-        ], 'No PayPal fee to add (amount is zero or negative)');
-        return true; // No fee to add
-    }
-    
-    // Check if PayPal fee item already exists to avoid duplicates
-    try {
-        $existingFee = \Illuminate\Database\Capsule\Manager::table('tblinvoiceitems')
-            ->where('invoiceid', $invoiceId)
-            ->where('description', 'like', '%PayPal%Fee%')
-            ->first();
+            'fee_amount' => $feeAmount,
+            'fee_percent' => $feePercent,
+            'fee_fixed' => $feeFixed,
+            'original_amount' => $originalAmount,
+            'currency' => $currency  // Log currency for debugging
+        ], 'PayPal Fee Addition Attempt');
         
-        if ($existingFee) {
+        if ($feeAmount <= 0) {
             logTransaction('paypalcustom', [
                 'invoice_id' => $invoiceId,
-                'existing_fee_item' => $existingFee
-            ], 'PayPal fee already exists on invoice');
-            return true; // Fee already added
+                'fee_amount' => $feeAmount
+            ], 'No PayPal fee to add (amount is zero or negative)');
+            return true; // No fee to add
         }
-    } catch (\Exception $e) {
-        logTransaction('paypalcustom', [
-            'invoice_id' => $invoiceId,
-            'error' => $e->getMessage()
-        ], 'Error checking for existing PayPal fee');
-        return false;
-    }
-    
-    // Add PayPal fee as new invoice line item using direct database insert
-    try {
-        $insertData = [
-            'invoiceid' => $invoiceId,
-            'userid' => 0, // Default, or fetch from invoice if needed
-            'type' => 'Item', // Standard item type
-            'relid' => 0, // No related product
-            'description' => "PayPal Processing Fee ({$feePercent}% + {$currency} {$feeFixed})", // Include currency in description
-            'amount' => $feeAmount,
-            'taxed' => 0, // Not taxed
-            'duedate' => date('Y-m-d'), // Today's date
-            'paymentmethod' => 'paypalcustom',
-            'notes' => ''
-        ];
         
-        $inserted = \Illuminate\Database\Capsule\Manager::table('tblinvoiceitems')->insert($insertData);
-        
-        if ($inserted) {
-            // Recalculate the invoice total after adding the fee
-            updateInvoiceTotal($invoiceId);
+        // Check if PayPal fee item already exists to avoid duplicates
+        try {
+            $existingFee = \Illuminate\Database\Capsule\Manager::table('tblinvoiceitems')
+                ->where('invoiceid', $invoiceId)
+                ->where('description', 'like', '%PayPal%Fee%')
+                ->first();
             
+            if ($existingFee) {
+                logTransaction('paypalcustom', [
+                    'invoice_id' => $invoiceId,
+                    'existing_fee_item' => $existingFee
+                ], 'PayPal fee already exists on invoice');
+                return true; // Fee already added
+            }
+        } catch (\Exception $e) {
             logTransaction('paypalcustom', [
                 'invoice_id' => $invoiceId,
-                'fee_amount' => $feeAmount,
-                'fee_percent' => $feePercent,
-                'fee_fixed' => $feeFixed,
-                'original_amount' => $originalAmount,
-                'currency' => $currency,
-                'insert_data' => $insertData
-            ], 'PayPal Fee Added to Invoice Successfully via Database');
-            return true;
-        } else {
-            logTransaction('paypalcustom', [
-                'invoice_id' => $invoiceId,
-                'error' => 'Insert failed',
-                'insert_data' => $insertData
-            ], 'Failed to Add PayPal Fee to Invoice via Database');
+                'error' => $e->getMessage()
+            ], 'Error checking for existing PayPal fee');
             return false;
         }
-    } catch (\Exception $e) {
-        logTransaction('paypalcustom', [
-            'invoice_id' => $invoiceId,
-            'error' => $e->getMessage(),
-            'insert_data' => $insertData ?? []
-        ], 'Exception Adding PayPal Fee to Invoice via Database');
-        return false;
+        
+        // Add PayPal fee as new invoice line item using direct database insert
+        try {
+            $insertData = [
+                'invoiceid' => $invoiceId,
+                'userid' => 0, // Default, or fetch from invoice if needed
+                'type' => 'Item', // Standard item type
+                'relid' => 0, // No related product
+                'description' => "PayPal Processing Fee ({$feePercent}% + {$currency} {$feeFixed})", // Include currency in description
+                'amount' => $feeAmount,
+                'taxed' => 0, // Not taxed
+                'duedate' => date('Y-m-d'), // Today's date
+                'paymentmethod' => 'paypalcustom',
+                'notes' => ''
+            ];
+            
+            $inserted = \Illuminate\Database\Capsule\Manager::table('tblinvoiceitems')->insert($insertData);
+            
+            if ($inserted) {
+                // Recalculate the invoice total after adding the fee
+                updateInvoiceTotal($invoiceId);
+                
+                logTransaction('paypalcustom', [
+                    'invoice_id' => $invoiceId,
+                    'fee_amount' => $feeAmount,
+                    'fee_percent' => $feePercent,
+                    'fee_fixed' => $feeFixed,
+                    'original_amount' => $originalAmount,
+                    'currency' => $currency,
+                    'insert_data' => $insertData
+                ], 'PayPal Fee Added to Invoice Successfully via Database');
+                return true;
+            } else {
+                logTransaction('paypalcustom', [
+                    'invoice_id' => $invoiceId,
+                    'error' => 'Insert failed',
+                    'insert_data' => $insertData
+                ], 'Failed to Add PayPal Fee to Invoice via Database');
+                return false;
+            }
+        } catch (\Exception $e) {
+            logTransaction('paypalcustom', [
+                'invoice_id' => $invoiceId,
+                'error' => $e->getMessage(),
+                'insert_data' => $insertData ?? []
+            ], 'Exception Adding PayPal Fee to Invoice via Database');
+            return false;
+        }
     }
 }
 
 // Helper function to check if client has "DontChargeFee" checked
-function paypalcustom_shouldChargeFee($clientId) {
-    if (!$clientId) {
-        return true; // Default to charging fee if no client ID
-    }
-    
-    try {
-        // Get the custom field ID for "DontChargeFee"
-        $customField = \Illuminate\Database\Capsule\Manager::table('tblcustomfields')
-            ->where('type', 'client')
-            ->where('fieldname', 'DontChargeFee')
-            ->first();
-        
-        if (!$customField) {
-            return true; // Field doesn't exist, charge fee
+if (!function_exists('paypalcustom_shouldChargeFee')) {
+    function paypalcustom_shouldChargeFee($clientId) {
+        if (!$clientId) {
+            return true; // Default to charging fee if no client ID
         }
         
-        // Check the value for this client
-        $fieldValue = \Illuminate\Database\Capsule\Manager::table('tblcustomfieldsvalues')
-            ->where('fieldid', $customField->id)
-            ->where('relid', $clientId)
-            ->value('value');
-        
-        // Return false if checked ("on"), true otherwise
-        return $fieldValue !== 'on';
-    } catch (\Exception $e) {
-        return true; // Error, charge fee
+        try {
+            // Get the custom field ID for "DontChargeFee"
+            $customField = \Illuminate\Database\Capsule\Manager::table('tblcustomfields')
+                ->where('type', 'client')
+                ->where('fieldname', 'DontChargeFee')
+                ->first();
+            
+            if (!$customField) {
+                return true; // Field doesn't exist, charge fee
+            }
+            
+            // Check the value for this client
+            $fieldValue = \Illuminate\Database\Capsule\Manager::table('tblcustomfieldsvalues')
+                ->where('fieldid', $customField->id)
+                ->where('relid', $clientId)
+                ->value('value');
+            
+            // Return false if checked ("on"), true otherwise
+            return $fieldValue !== 'on';
+        } catch (\Exception $e) {
+            return true; // Error, charge fee
+        }
     }
 }
