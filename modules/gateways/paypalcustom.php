@@ -303,6 +303,16 @@ function paypalcustom_shouldChargeFee($clientId) {
     }
 }
 
+// Helper function to get invoice details
+function paypalcustom_getInvoiceDetails($invoiceId) {
+    $command = 'GetInvoice';
+    $postData = array(
+        'invoiceid' => $invoiceId,
+    );
+    $results = localAPI($command, $postData);
+    return $results;
+}
+
 // Webhook/Callback Handler (to be placed in callback/paypalcustom.php)
 // This file should verify the webhook signature and mark invoice as paid in WHMCS.
 // See README for implementation details.
