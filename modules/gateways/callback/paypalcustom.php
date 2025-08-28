@@ -181,7 +181,7 @@ if (isset($event['event_type']) && $event['event_type'] === 'CHECKOUT.ORDER.APPR
     $clientId = $invoiceDetails['userid'] ?? null;
     $shouldChargeFee = paypalcustom_shouldChargeFee($clientId);
     
-    // Calculate fees only if not exempted
+    // Calculate PayPal fees only if not exempted
     $feePercent = $shouldChargeFee ? (float)($gatewayParams['feePercent'] ?? 5.95) : 0;
     $feeFixed = $shouldChargeFee ? (float)($gatewayParams['feeFixed'] ?? 0.30) : 0;
     $calculatedFee = round(($originalAmount * $feePercent / 100) + $feeFixed, 2);
@@ -227,7 +227,7 @@ if (isset($event['event_type']) && $event['event_type'] === 'CHECKOUT.ORDER.APPR
     // Check for duplicate transaction
     checkCbTransID($captureId);
     
-    // Add PayPal fee only if not exempted
+    // Step 1: Add PayPal fee to invoice as line item only if not exempted (AFTER payment)
     if ($shouldChargeFee && $calculatedFee > 0) {
         $feeAdded = paypalcustom_addPayPalFeeToInvoice(
             $invoiceId, 
@@ -237,21 +237,45 @@ if (isset($event['event_type']) && $event['event_type'] === 'CHECKOUT.ORDER.APPR
             $originalAmount, 
             $originalCurrency
         );
-        $amountToAdd = $capturedAmount; // Use captured amount (includes fee)
+        
+        // Always use the captured amount for payment (includes fee), regardless of fee addition success
+        $amountToAdd = $capturedAmount;
+        
+        // If fee was added successfully, verify the invoice total matches (optional logging)
+        if ($feeAdded) {
+            $updatedInvoiceDetails = paypalcustom_getInvoiceDetails($invoiceId);
+            if ($updatedInvoiceDetails['result'] === 'success') {
+                $newInvoiceTotal = $updatedInvoiceDetails['total'];
+                if (abs($newInvoiceTotal - ($originalAmount + $calculatedFee)) > 0.01) {
+                    logTransaction($gatewayParams['paymentmethod'], [
+                        'invoice_id' => $invoiceId,
+                        'expected_total' => $originalAmount + $calculatedFee,
+                        'actual_total' => $newInvoiceTotal,
+                        'captured_amount' => $capturedAmount
+                    ], 'Warning: Invoice total does not match expected after fee addition');
+                }
+            }
+        } else {
+            logTransaction($gatewayParams['paymentmethod'], [
+                'invoice_id' => $invoiceId,
+                'fee_amount' => $calculatedFee,
+                'error' => 'Fee addition failed, but payment recorded for captured amount'
+            ], 'Fee addition failed - payment recorded without fee item');
+        }
     } else {
-        $amountToAdd = $capturedAmount; // Use captured amount (no fee added)
+        $amountToAdd = $capturedAmount; // No fee, use captured amount
         logTransaction($gatewayParams['paymentmethod'], [
             'invoice_id' => $invoiceId,
             'client_id' => $clientId
         ], 'DontChargeFee enabled - skipping fee addition');
     }
     
-    // Step 4: Add payment to invoice
+    // Step 4: Add payment to invoice (using captured amount, which includes fee if applicable)
     addInvoicePayment(
         $invoiceId,
         $captureId,
-        $amountToAdd,
-        0,
+        $amountToAdd, // Always the captured amount
+        0, // Payment fee (set to 0 since fee is handled separately)
         $gatewayParams['paymentmethod']
     );
     
@@ -260,7 +284,7 @@ if (isset($event['event_type']) && $event['event_type'] === 'CHECKOUT.ORDER.APPR
     exit;
 }
 
-// Handle Payment Capture Completed (similar logic)
+// Handle Payment Capture Completed (if you also want to listen for this)
 if (isset($event['event_type']) && $event['event_type'] === 'PAYMENT.CAPTURE.COMPLETED') {
     $captureId = $event['resource']['id'];
     $paypalAmount = $event['resource']['amount']['value'];
@@ -317,9 +341,20 @@ if (isset($event['event_type']) && $event['event_type'] === 'PAYMENT.CAPTURE.COM
     $clientId = $invoiceDetails['userid'] ?? null;
     $shouldChargeFee = paypalcustom_shouldChargeFee($clientId);
     
-    // Calculate fees only if not exempted
+    // Calculate PayPal fees only if not exempted
     $feePercent = $shouldChargeFee ? (float)($gatewayParams['feePercent'] ?? 5.95) : 0;
     $feeFixed = $shouldChargeFee ? (float)($gatewayParams['feeFixed'] ?? 0.30) : 0;
+    
+    // Debug: Log the fee parameters to verify they're being retrieved correctly
+    logTransaction($gatewayParams['paymentmethod'], [
+        'fee_percent_raw' => $gatewayParams['feePercent'] ?? 'not set',
+        'fee_fixed_raw' => $gatewayParams['feeFixed'] ?? 'not set', 
+        'fee_percent_calculated' => $feePercent,
+        'fee_fixed_calculated' => $feeFixed,
+        'original_amount' => $originalAmount,
+        'original_currency' => $originalCurrency
+    ], 'PayPal Fee Parameters Debug');
+    
     $calculatedFee = round(($originalAmount * $feePercent / 100) + $feeFixed, 2);
     
     // Validate invoice ID
@@ -327,7 +362,7 @@ if (isset($event['event_type']) && $event['event_type'] === 'PAYMENT.CAPTURE.COM
     // Check for duplicate transaction
     checkCbTransID($captureId);
     
-    // Add PayPal fee only if not exempted
+    // Step 1: Add PayPal fee to invoice as line item only if not exempted (AFTER payment)
     if ($shouldChargeFee && $calculatedFee > 0) {
         $feeAdded = paypalcustom_addPayPalFeeToInvoice(
             $invoiceId, 
@@ -337,16 +372,40 @@ if (isset($event['event_type']) && $event['event_type'] === 'PAYMENT.CAPTURE.COM
             $originalAmount, 
             $originalCurrency
         );
+        
+        // Always use the captured amount for payment (includes fee), regardless of fee addition success
         $amountToAdd = $capturedAmount;
+        
+        // If fee was added successfully, verify the invoice total matches (optional logging)
+        if ($feeAdded) {
+            $updatedInvoiceDetails = paypalcustom_getInvoiceDetails($invoiceId);
+            if ($updatedInvoiceDetails['result'] === 'success') {
+                $newInvoiceTotal = $updatedInvoiceDetails['total'];
+                if (abs($newInvoiceTotal - ($originalAmount + $calculatedFee)) > 0.01) {
+                    logTransaction($gatewayParams['paymentmethod'], [
+                        'invoice_id' => $invoiceId,
+                        'expected_total' => $originalAmount + $calculatedFee,
+                        'actual_total' => $newInvoiceTotal,
+                        'captured_amount' => $capturedAmount
+                    ], 'Warning: Invoice total does not match expected after fee addition');
+                }
+            }
+        } else {
+            logTransaction($gatewayParams['paymentmethod'], [
+                'invoice_id' => $invoiceId,
+                'fee_amount' => $calculatedFee,
+                'error' => 'Fee addition failed, but payment recorded for captured amount'
+            ], 'Fee addition failed - payment recorded without fee item');
+        }
     } else {
-        $amountToAdd = $capturedAmount;
+        $amountToAdd = $capturedAmount; // No fee, use captured amount
         logTransaction($gatewayParams['paymentmethod'], [
             'invoice_id' => $invoiceId,
             'client_id' => $clientId
         ], 'DontChargeFee enabled - skipping fee addition');
     }
     
-    // Step 4: Add payment to invoice (using captured amount, which includes fee)
+    // Step 4: Add payment to invoice (using captured amount, which includes fee if applicable)
     addInvoicePayment(
         $invoiceId,
         $captureId,
@@ -494,7 +553,7 @@ function paypalcustom_addPayPalFeeToInvoice($invoiceId, $feeAmount, $feePercent,
     }
 }
 
-// Add the helper function for DontChargeFee check
+// Helper function to check if client has "DontChargeFee" checked
 function paypalcustom_shouldChargeFee($clientId) {
     if (!$clientId) {
         return true; // Default to charging fee if no client ID

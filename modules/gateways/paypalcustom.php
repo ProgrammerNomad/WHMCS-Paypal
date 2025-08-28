@@ -141,6 +141,8 @@ function paypalcustom_link($params)
     $clientId = $params['clientId'];
     $clientSecret = $params['clientSecret'];
     $mode = $params['mode'] ?? 'live';
+    $feePercent = (float)$params['feePercent'];
+    $feeFixed = (float)$params['feeFixed'];
     $invoiceId = $params['invoiceid'];
     $description = $params['description'];
     $amount = $params['amount'];
@@ -149,39 +151,13 @@ function paypalcustom_link($params)
 
     // Fetch client ID from invoice to check DontChargeFee
     $invoiceDetails = paypalcustom_getInvoiceDetails($invoiceId); // Reuse existing function
-    $clientId = $invoiceDetails['userid'] ?? null;
-    $shouldChargeFee = paypalcustom_shouldChargeFee($clientId);
+    $clientIdFromInvoice = $invoiceDetails['userid'] ?? null;
+    $shouldChargeFee = paypalcustom_shouldChargeFee($clientIdFromInvoice);
     
     // Calculate fees only if not exempted
-    $feePercent = $shouldChargeFee ? (float)$params['feePercent'] : 0;
-    $feeFixed = $shouldChargeFee ? (float)$params['feeFixed'] : 0;
-    $fee = round(($amount * $feePercent / 100) + $feeFixed, 2);
-    
-    // Add fee to invoice BEFORE PayPal API call (if applicable)
-    if ($shouldChargeFee && $fee > 0) {
-        $feeAdded = paypalcustom_addPayPalFeeToInvoice(
-            $invoiceId, 
-            $fee, 
-            $feePercent, 
-            $feeFixed, 
-            $amount, 
-            $currency
-        );
-        if (!$feeAdded) {
-            return '<div class="alert alert-danger">Unable to add PayPal fee to invoice. Please contact support.</div>';
-        }
-        
-        // Re-fetch updated invoice total after fee addition
-        $updatedInvoiceDetails = paypalcustom_getInvoiceDetails($invoiceId);
-        if ($updatedInvoiceDetails['result'] === 'success') {
-            $totalAmount = $updatedInvoiceDetails['total'];
-        } else {
-            return '<div class="alert alert-danger">Unable to update invoice total. Please contact support.</div>';
-        }
-    } else {
-        $totalAmount = $amount; // No fee, use original amount
-    }
-    
+    $fee = $shouldChargeFee ? round(($amount * $feePercent / 100) + $feeFixed, 2) : 0;
+    $totalAmount = round($amount + $fee, 2);
+
     $accessToken = paypalcustom_getAccessToken($params);
     if (!$accessToken) {
         return '<div class="alert alert-danger">Unable to connect to PayPal API. Please contact support.</div>';
