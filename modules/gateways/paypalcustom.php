@@ -141,17 +141,47 @@ function paypalcustom_link($params)
     $clientId = $params['clientId'];
     $clientSecret = $params['clientSecret'];
     $mode = $params['mode'] ?? 'live';
-    $feePercent = (float)$params['feePercent'];
-    $feeFixed = (float)$params['feeFixed'];
     $invoiceId = $params['invoiceid'];
     $description = $params['description'];
     $amount = $params['amount'];
     $currency = $params['currency'];
     $systemUrl = $params['systemurl'];
 
+    // Fetch client ID from invoice to check DontChargeFee
+    $invoiceDetails = paypalcustom_getInvoiceDetails($invoiceId); // Reuse existing function
+    $clientId = $invoiceDetails['userid'] ?? null;
+    $shouldChargeFee = paypalcustom_shouldChargeFee($clientId);
+    
+    // Calculate fees only if not exempted
+    $feePercent = $shouldChargeFee ? (float)$params['feePercent'] : 0;
+    $feeFixed = $shouldChargeFee ? (float)$params['feeFixed'] : 0;
     $fee = round(($amount * $feePercent / 100) + $feeFixed, 2);
-    $totalAmount = round($amount + $fee, 2);
-
+    
+    // Add fee to invoice BEFORE PayPal API call (if applicable)
+    if ($shouldChargeFee && $fee > 0) {
+        $feeAdded = paypalcustom_addPayPalFeeToInvoice(
+            $invoiceId, 
+            $fee, 
+            $feePercent, 
+            $feeFixed, 
+            $amount, 
+            $currency
+        );
+        if (!$feeAdded) {
+            return '<div class="alert alert-danger">Unable to add PayPal fee to invoice. Please contact support.</div>';
+        }
+        
+        // Re-fetch updated invoice total after fee addition
+        $updatedInvoiceDetails = paypalcustom_getInvoiceDetails($invoiceId);
+        if ($updatedInvoiceDetails['result'] === 'success') {
+            $totalAmount = $updatedInvoiceDetails['total'];
+        } else {
+            return '<div class="alert alert-danger">Unable to update invoice total. Please contact support.</div>';
+        }
+    } else {
+        $totalAmount = $amount; // No fee, use original amount
+    }
+    
     $accessToken = paypalcustom_getAccessToken($params);
     if (!$accessToken) {
         return '<div class="alert alert-danger">Unable to connect to PayPal API. Please contact support.</div>';
@@ -237,8 +267,40 @@ function paypalcustom_link($params)
 
     // Now build the full HTML, including messages before the button
     $html = $messageHtml . '<a href="' . htmlspecialchars($approveUrl) . '" class="btn btn-primary">Pay with PayPal (Total: ' . $totalAmount . ' ' . htmlspecialchars($currency) . ')</a>';
-    $html .= '<br><small>PayPal fees applicable: ' . $feePercent . '% + $' . $feeFixed . ' (Total fee: $' . $fee . ')</small>';
+    if ($fee > 0) {
+        $html .= '<br><small>PayPal fees applicable: ' . $feePercent . '% + $' . $feeFixed . ' (Total fee: $' . $fee . ')</small>';
+    }
     return $html;
+}
+
+// Helper function to check if client has "DontChargeFee" checked
+function paypalcustom_shouldChargeFee($clientId) {
+    if (!$clientId) {
+        return true; // Default to charging fee if no client ID
+    }
+    
+    try {
+        // Get the custom field ID for "DontChargeFee"
+        $customField = \Illuminate\Database\Capsule\Manager::table('tblcustomfields')
+            ->where('type', 'client')
+            ->where('fieldname', 'DontChargeFee')
+            ->first();
+        
+        if (!$customField) {
+            return true; // Field doesn't exist, charge fee
+        }
+        
+        // Check the value for this client
+        $fieldValue = \Illuminate\Database\Capsule\Manager::table('tblcustomfieldsvalues')
+            ->where('fieldid', $customField->id)
+            ->where('relid', $clientId)
+            ->value('value');
+        
+        // Return false if checked ("on"), true otherwise
+        return $fieldValue !== 'on';
+    } catch (\Exception $e) {
+        return true; // Error, charge fee
+    }
 }
 
 // Webhook/Callback Handler (to be placed in callback/paypalcustom.php)
